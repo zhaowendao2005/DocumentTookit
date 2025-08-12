@@ -136,7 +136,7 @@ class FileProcessor {
       while (true) {
         const current = tasks[taskIndex++];
         if (!current) break;
-        if (options?.controller && options.controller.isStopped()) break;
+        if (options?.controller && options.controller.isStopped()) break; // 软/硬停止均不再拉新任务
 
         const { rel, file, repIndex, total, taskId } = current;
         try {
@@ -149,8 +149,16 @@ class FileProcessor {
 
           this.logger.info(`发送中: ${rel} [${repIndex + 1}/${total}] -> ${modelSel.provider}/${modelSel.model}`);
           if (options?.controller) options.controller.updateTask(taskId, { stage: 'running' });
-          if (options?.controller && options.controller.isStopped()) throw Object.assign(new Error('用户停止'), { code: 'USER_ABORT' });
+          if (options?.controller && options.controller.isHardStopped()) throw Object.assign(new Error('用户停止(硬)'), { code: 'USER_ABORT' });
           const { text, raw } = await this.requestLLM(modelSel, content, (this.lastTimeouts || this.config.network || {}));
+          // 若在请求返回时已经硬停止，则丢弃结果并记为取消
+          if (options?.controller && options.controller.isHardStopped()) {
+            const meta = fileMetaMap.get(rel);
+            meta.errors += 1;
+            this.logger.warn(`已硬停止，丢弃结果: ${rel} [${repIndex + 1}/${total}]`);
+            if (options?.controller) options.controller.updateTask(taskId, { stage: 'done' });
+            continue;
+          }
 
           // 记录 token 用量（优先真实 usage，回退估算）
           const usage = this.tokenCounter.getTokenUsage(
@@ -186,7 +194,28 @@ class FileProcessor {
     };
 
     const workers = Array.from({ length: concurrency }).map(() => worker());
-    await Promise.all(workers);
+    if (options?.controller) {
+      let stoppedEarly = false;
+      await Promise.race([
+        Promise.all(workers),
+        new Promise((resolve) => {
+          const interval = setInterval(() => {
+            if (options.controller.isHardStopped()) {
+              clearInterval(interval);
+              stoppedEarly = true;
+              resolve('stop');
+            }
+          }, 100);
+        })
+      ]);
+      if (stoppedEarly) {
+        this.logger.warn(chalk.yellow('硬停止触发：跳过等待剩余任务'));
+      } else {
+        // workers 已正常结束
+      }
+    } else {
+      await Promise.all(workers);
+    }
 
     // 全部请求完成后，逐文件汇总与输出
     let succeeded = 0;

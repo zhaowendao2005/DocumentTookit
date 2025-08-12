@@ -76,7 +76,7 @@ class StructuredFileProcessor {
       while (true) {
         const current = tasks[index++];
         if (!current) break;
-        if (options?.controller && options.controller.isStopped()) break;
+        if (options?.controller && options.controller.isStopped()) break; // 停止后不再取新任务
         const file = current.file;
         const rel = file.relativePath || path.basename(file.path);
         const outPath = path.join(runOutputDir, rel.replace(path.extname(rel), '.csv'));
@@ -86,8 +86,13 @@ class StructuredFileProcessor {
         try {
           const content = await FileUtils.readFile(file.path);
           if (options?.controller) options.controller.updateTask(current.taskId, { stage: 'running' });
-          if (options?.controller && options.controller.isStopped()) throw Object.assign(new Error('用户停止'), { code: 'USER_ABORT' });
+          if (options?.controller && options.controller.isHardStopped()) throw Object.assign(new Error('用户停止(硬)'), { code: 'USER_ABORT' });
           const { finalCsv, repairAttemptsUsed, validationErrors } = await this._processOneFile({ modelSel, content, filename: rel, tempDir, promptVersion, maxRepairAttempts });
+          // 若返回时已硬停止，则丢弃结果并按取消处理
+          if (options?.controller && options.controller.isHardStopped()) {
+            this.logger.warn(chalk.yellow(`已硬停止，丢弃结果: ${rel}`));
+            throw Object.assign(new Error('用户停止(硬)'), { code: 'USER_ABORT' });
+          }
           FileUtils.writeFile(outPath, finalCsv, 'utf8');
           this.logger.info(chalk.green(`✅ 写出CSV: ${outPath}`));
           record.succeeded = true;
@@ -99,7 +104,7 @@ class StructuredFileProcessor {
           if (options?.controller) options.controller.updateTask(current.taskId, { stage: 'done' });
           record.error = e.message;
           this.logger.warn(chalk.yellow(`结构化模式失败: ${rel} - ${e.message}`));
-          if (this.config.processing?.allow_fallback && (this.config.processing?.fallback_mode === 'classic')) {
+          if (!(options?.controller && options.controller.isStopped()) && this.config.processing?.allow_fallback && (this.config.processing?.fallback_mode === 'classic')) {
             try {
               const FileProcessor = require('./file-processor');
               const classic = new FileProcessor({ config: this.config, logger: this.logger });
@@ -151,7 +156,26 @@ class StructuredFileProcessor {
     };
 
     const workers = Array.from({ length: concurrency }).map(() => worker());
-    await Promise.all(workers);
+    if (options?.controller) {
+      let stoppedEarly = false;
+      await Promise.race([
+        Promise.all(workers),
+        new Promise((resolve) => {
+          const interval = setInterval(() => {
+            if (options.controller.isHardStopped()) {
+              clearInterval(interval);
+              stoppedEarly = true;
+              resolve('stop');
+            }
+          }, 100);
+        })
+      ]);
+      if (stoppedEarly) {
+        this.logger.warn(chalk.yellow('硬停止触发：跳过等待剩余任务'));
+      }
+    } else {
+      await Promise.all(workers);
+    }
 
     const tokenStats = this.tokenCounter.getTokenStats();
     const manifest = reporter.finalize();

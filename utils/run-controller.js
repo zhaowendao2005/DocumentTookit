@@ -1,9 +1,9 @@
 class RunController {
   constructor() {
-    this.stopped = false;
+    this.stopLevel = 0; // 0=running, 1=soft stop, 2=hard stop
     this.stoppedAt = null;
     this.reason = '';
-    this.tasks = new Map(); // id -> { filename, stage: 'pending'|'running'|'done' }
+    this.tasks = new Map(); // id -> { filename, stage: 'pending'|'running'|'done', cancel?: ()=>void }
     this.nextId = 1;
   }
 
@@ -20,16 +20,29 @@ class RunController {
     this.tasks.set(id, t);
   }
 
-  stop(reason = 'user requested stop') {
-    if (this.stopped) return;
-    this.stopped = true;
+  softStop(reason = 'user requested soft stop') {
+    if (this.stopLevel >= 1) return;
+    this.stopLevel = 1;
     this.stoppedAt = new Date();
     this.reason = reason;
   }
 
-  isStopped() {
-    return this.stopped;
+  hardStop(reason = 'user requested hard stop') {
+    if (this.stopLevel >= 2) return;
+    this.stopLevel = 2;
+    this.stoppedAt = new Date();
+    this.reason = reason;
+    // 触发进行中任务的取消
+    for (const [, t] of this.tasks.entries()) {
+      if (t.stage === 'running' && typeof t.cancel === 'function') {
+        try { t.cancel(); } catch {}
+      }
+    }
   }
+
+  isSoftStopped() { return this.stopLevel >= 1 && this.stopLevel < 2; }
+  isHardStopped() { return this.stopLevel >= 2; }
+  isStopped() { return this.stopLevel >= 1; }
 
   /**
    * 返回当前仍为 pending 或 running 的任务快照

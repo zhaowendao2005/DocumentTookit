@@ -143,11 +143,16 @@ class MainApplication {
                     process.stdin.on('data', (buf) => {
                         const key = buf.toString().toLowerCase();
                         if (key === 's') {
-                            controller.stop('user pressed s to stop');
-                            this.ui.showWarning('收到停止指令，未开始与进行中的请求将标记 user_cancelled');
+                            if (!controller.isStopped()) {
+                                controller.softStop('user pressed s (soft)');
+                                this.ui.showWarning('收到停止指令(软)：不再启动新请求，等待已在途的请求返回；未开始的将标记 user_cancelled');
+                            } else if (!controller.isHardStopped()) {
+                                controller.hardStop('user pressed s (hard)');
+                                this.ui.showWarning('收到停止指令(硬)：立即结束在途请求，已在途的将标记 user_cancelled');
+                            }
                         } else if (key === '\u0003') { // Ctrl+C
-                            controller.stop('SIGINT');
-                            this.ui.showWarning('收到 Ctrl+C，停止当前任务');
+                            controller.hardStop('SIGINT');
+                            this.ui.showWarning('收到 Ctrl+C（硬停止），停止当前任务');
                         }
                     });
                     this.ui.showInfo('按 s 停止当前任务');
