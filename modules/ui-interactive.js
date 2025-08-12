@@ -805,44 +805,74 @@ class InteractiveUI {
     }
 
     /**
-     * 选择输入目录或文件（支持多选）
+     * 选择输入目录或文件（支持空格键多选和目录递归选择）
      * @param {string} rootDir
      * @returns {Promise<string[]>} 选中的绝对路径列表
      */
     async selectInputs(rootDir) {
         console.log(chalk.cyan('\n📂 选择输入源'));
+        console.log(chalk.gray('💡 提示: 支持空格键多选，选择目录时会自动包含该目录下的所有支持文件\n'));
         
         const sourceType = await inquirer.prompt([{
             type: 'list',
             name: 'type',
-            message: chalk.cyan('请选择输入类型:'),
+            message: chalk.cyan('请选择输入方式:'),
             choices: [
                 {
-                    name: '📁 目录（处理目录下所有支持的文件）',
-                    value: 'directory',
-                    short: '目录'
+                    name: '🎯 增强多选模式（推荐）- 支持空格键选择文件和目录',
+                    value: 'enhanced',
+                    short: '增强多选'
                 },
                 {
-                    name: '📄 文件（选择特定文件进行处理）',
+                    name: '📁 传统目录模式 - 选择单个目录处理所有文件',
+                    value: 'directory',
+                    short: '单目录'
+                },
+                {
+                    name: '📄 传统文件模式 - 手动选择多个文件',
                     value: 'files',
-                    short: '文件'
+                    short: '多文件'
                 }
             ],
-            default: 'directory'
+            default: 'enhanced'
         }]);
 
-        if (sourceType.type === 'directory') {
-            // 选择目录
-            const dir = await this.selectPath('输入文件目录', rootDir);
-            return [dir];
-        } else {
-            // 选择多个文件
-            const files = await this.selectPath(
-                '选择要处理的文件', 
-                rootDir, 
-                { selectFiles: true, multiple: true }
-            );
-            return Array.isArray(files) ? files : [files];
+        switch (sourceType.type) {
+            case 'enhanced':
+                // 使用增强的多选模式
+                console.log(chalk.yellow('\n🚀 增强多选模式:'));
+                console.log(chalk.gray('- 使用 ↑↓ 键移动光标'));
+                console.log(chalk.gray('- 使用 空格键 选择/取消选择文件或目录'));
+                console.log(chalk.gray('- 选择目录时会自动包含该目录下的所有支持文件'));
+                console.log(chalk.gray('- 使用 a 键全选，i 键反选'));
+                console.log(chalk.gray('- 按回车键确认选择\n'));
+                
+                const selectedFiles = await this.fileSelector.select({
+                    type: 'both',
+                    multiple: true,
+                    startPath: rootDir,
+                    message: '请选择要处理的文件和目录',
+                    extensions: ['.txt', '.md', '.docx']
+                });
+                
+                return selectedFiles || [];
+                
+            case 'directory':
+                // 选择单个目录
+                const dir = await this.selectPath('输入文件目录', rootDir);
+                return [dir];
+                
+            case 'files':
+                // 传统多文件选择
+                const files = await this.selectPath(
+                    '选择要处理的文件', 
+                    rootDir, 
+                    { selectFiles: true, multiple: true }
+                );
+                return Array.isArray(files) ? files : [files];
+                
+            default:
+                return [];
         }
     }
 
