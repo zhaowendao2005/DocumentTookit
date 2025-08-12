@@ -5,14 +5,13 @@ const chalk = require('chalk');
 const ora = require('ora');
 const boxen = require('boxen');
 const gradient = require('gradient-string');
-
-// 注册文件树选择插件
-inquirer.registerPrompt('file-tree-selection', require('inquirer-file-tree-selection-prompt'));
+const FileSelector = require('../utils/file-selector');
 
 class InteractiveUI {
     constructor(config = {}) {
         this.spinner = null;
         this.config = config;
+        this.fileSelector = new FileSelector();
     }
 
     /**
@@ -214,35 +213,32 @@ class InteractiveUI {
         
         const startPath = fs.existsSync(defaultPath) ? defaultPath : process.cwd();
         
-        if (selectFiles) {
-            // 选择文件
-            const answer = await inquirer.prompt([{
-                type: 'file-tree-selection',
-                name: 'selection',
-                message: chalk.cyan(`选择${multiple ? '文件（可多选）' : '文件'}:`),
-                root: startPath,
-                multiple: multiple,
-                onlyShowValid: true,
-                validate: (item) => {
-                    return item.isFile();
-                }
-            }]);
-            
-            return multiple ? answer.selection : answer.selection[0];
-        } else {
-            // 选择目录
-            const answer = await inquirer.prompt([{
-                type: 'file-tree-selection',
-                name: 'directory',
-                message: chalk.cyan('选择目录:'),
-                root: startPath,
-                onlyShowValid: true,
-                validate: (item) => {
-                    return item.isDirectory();
-                }
-            }]);
-            
-            return answer.directory;
+        try {
+            if (selectFiles) {
+                // 选择文件
+                const supportedExtensions = ['.txt', '.md', '.docx'];
+                const result = await this.fileSelector.select({
+                    type: 'file',
+                    multiple: multiple,
+                    startPath: startPath,
+                    message: chalk.cyan(`${title} - 选择${multiple ? '文件（可多选）' : '文件'}`),
+                    extensions: supportedExtensions
+                });
+                
+                return result;
+            } else {
+                // 选择目录
+                const result = await this.fileSelector.select({
+                    type: 'directory',
+                    multiple: false,
+                    startPath: startPath,
+                    message: chalk.cyan(`${title} - 选择目录`)
+                });
+                
+                return result;
+            }
+        } catch (error) {
+            throw new Error(`文件选择失败: ${error.message}`);
         }
     }
 
