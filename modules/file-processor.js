@@ -1,11 +1,14 @@
 const path = require('path');
 const fs = require('fs');
 const chalk = require('chalk');
+const inquirer = require('inquirer');
 const FileUtils = require('../utils/file-utils');
 const SimilarityCalculator = require('../utils/similarity');
 const TokenCounter = require('../utils/token-counter');
 const LLMClient = require('./llm-client');
 const CsvMerger = require('../utils/csv-merger');
+const CsvValidator = require('../utils/csv-validator');
+const SemanticValidator = require('./semantic-validator');
 
 /**
  * 批量文件处理器：读取 -> 请求LLM -> 校验 -> 输出
@@ -23,6 +26,11 @@ class FileProcessor {
     this.sim = new SimilarityCalculator();
     this.tokenCounter = new TokenCounter();
     this.csvMerger = new CsvMerger(logger);
+    this.csvValidator = new CsvValidator({ logger });
+    this.semanticValidator = new SemanticValidator({ 
+      logger,
+      similarityThreshold: config.validation?.similarity_threshold || 0.8
+    });
 
     // 初始化 token 日志
     if (config.token_tracking?.save_token_logs && config.token_tracking?.log_file) {
@@ -360,31 +368,245 @@ class FileProcessor {
   }
 
   /**
-   * 汇总并输出单文件结果
+   * 汇总并输出单文件结果 - 新增用户决策流程
    */
   async finalizeFileResult(rel, meta, requestCount) {
-    const { outPath, results } = meta;
+    const { outPath, tempFilePath, results } = meta;
     const enableMulti = (requestCount > 1) && !!(this.lastValidation?.enableMultiple);
 
-    let finalText = results[0] || '';
-    if (enableMulti && results.length > 1) {
-      const similarities = await this.sim.calculateBatchSimilarity(results);
-      const avg = this.sim.calculateAverageSimilarity(similarities);
-      const anomalies = this.sim.detectAnomalies(similarities, this.config.validation?.similarity_threshold ?? 0.8);
+    this.logger.info(chalk.blue(`\n📋 处理文件结果: ${rel}`));
 
-      // 多数投票
-      const counter = new Map();
-      for (const r of results) counter.set(r, (counter.get(r) || 0) + 1);
-      finalText = [...counter.entries()].sort((a, b) => b[1] - a[1])[0][0];
-
-      this.logger.info(`一致性校验: ${rel} 平均相似度=${avg.toFixed(3)}，异常对数=${anomalies.length}`);
+    // 1. 如果是单样本，直接处理
+    if (!enableMulti || results.length <= 1) {
+      return await this.processSingleSample(rel, results[0] || '', outPath, tempFilePath);
     }
 
-    const extracted = this.extractCsvFromText(finalText);
-    const csv = extracted || this.ensureCSV(finalText);
+    // 2. 先对每个样本进行CSV格式修复 (修复工作流顺序)
+    this.logger.info(chalk.yellow(`🔧 预处理样本格式 (${results.length}个样本)`));
+    const fixedResults = [];
+    for (let i = 0; i < results.length; i++) {
+      const result = results[i];
+      try {
+        const csvValidation = await this.csvValidator.validateAndFix(result, `${rel}_sample_${i}`);
+        fixedResults.push({
+          originalIndex: i,
+          original: result,
+          fixed: csvValidation.fixed,
+          confidence: csvValidation.confidence,
+          issues: csvValidation.issues,
+          autoFixed: csvValidation.autoFixed,
+          isUsable: csvValidation.confidence > 0.4 || csvValidation.autoFixed.length > 0
+        });
+        
+        this.logger.debug(`样本${i}: 置信度${(csvValidation.confidence * 100).toFixed(1)}%, 修复${csvValidation.autoFixed.length}个问题`);
+      } catch (error) {
+        this.logger.warn(`样本${i}格式修复失败: ${error.message}`);
+        fixedResults.push({
+          originalIndex: i,
+          original: result,
+          fixed: result,
+          confidence: 0.1,
+          issues: [{ type: 'fix_error', message: error.message }],
+          autoFixed: [],
+          isUsable: false
+        });
+      }
+    }
+
+    // 检查是否有可用样本
+    const usableResults = fixedResults.filter(r => r.isUsable);
+    if (usableResults.length === 0) {
+      this.logger.warn(chalk.red(`⚠️  所有样本格式修复后仍不可用，使用简单投票逻辑`));
+      return await this.processWithSimpleVoting(results, outPath, tempFilePath, rel);
+    }
+
+    this.logger.info(chalk.green(`✅ 格式预处理完成: ${usableResults.length}/${results.length}个样本可用`));
+
+    // 3. 多样本语义校验 (使用修复后的内容)
+    this.logger.info(chalk.yellow(`🔍 启动多样本语义校验 (${usableResults.length}个可用样本)`));
+    const fixedContents = usableResults.map(r => r.fixed);
+    const validationResult = await this.semanticValidator.validateMultipleSamples(fixedContents, rel);
+    
+    // 将原始样本信息附加到校验结果中
+    validationResult.preprocessedSamples = fixedResults;
+    validationResult.usableSamples = usableResults;
+
+    // 4. 用户决策流程
+    const userDecision = await this.getUserDecision(validationResult, rel);
+
+    // 5. 根据用户决策处理
+    switch (userDecision.action) {
+      case 'accept_auto':
+        return await this.processValidatedResult(validationResult, outPath, tempFilePath, rel);
+      
+      case 'manual_select':
+        const selectedSample = results[userDecision.selectedIndex];
+        return await this.processSingleSample(rel, selectedSample, outPath, tempFilePath);
+      
+      case 'skip_validation':
+        // 使用原始的简单投票逻辑
+        return await this.processWithSimpleVoting(results, outPath, tempFilePath, rel);
+      
+      default:
+        throw new Error(`未知的用户决策: ${userDecision.action}`);
+    }
+  }
+
+  /**
+   * 用户决策流程 - 根据校验结果让用户选择处理方式
+   */
+  async getUserDecision(validationResult, filename) {
+    // 显示校验结果摘要
+    this.displayValidationSummary(validationResult, filename);
+
+    // 根据置信度决定是否需要用户干预
+    if (validationResult.confidence >= 0.8 && validationResult.selectedSample) {
+      this.logger.info(chalk.green(`✅ 校验置信度高 (${(validationResult.confidence * 100).toFixed(1)}%)，自动采用推荐结果`));
+      return { action: 'accept_auto' };
+    }
+
+    // 低置信度或有异常，提供用户选择
+    const choices = [
+      {
+        name: `接受自动推荐 (置信度: ${(validationResult.confidence * 100).toFixed(1)}%)`,
+        value: 'accept_auto',
+        disabled: !validationResult.selectedSample
+      },
+      {
+        name: '手动选择样本',
+        value: 'manual_select'
+      },
+      {
+        name: '跳过高级校验，使用简单投票',
+        value: 'skip_validation'
+      }
+    ];
+
+    const decision = await inquirer.prompt([{
+      type: 'list',
+      name: 'action',
+      message: `${filename} - 请选择处理方式:`,
+      choices: choices.filter(choice => !choice.disabled)
+    }]);
+
+    // 如果选择手动选择，进一步询问选择哪个样本
+    if (decision.action === 'manual_select') {
+      const sampleChoices = validationResult.validSamples.map((sample, idx) => ({
+        name: `样本${sample.index} (格式置信度: ${(sample.validationResult.confidence * 100).toFixed(1)}%, 长度: ${sample.content.length})`,
+        value: sample.index
+      }));
+
+      const sampleDecision = await inquirer.prompt([{
+        type: 'list',
+        name: 'selectedIndex',
+        message: '请选择样本:',
+        choices: sampleChoices
+      }]);
+
+      decision.selectedIndex = sampleDecision.selectedIndex;
+    }
+
+    return decision;
+  }
+
+  /**
+   * 显示校验结果摘要
+   */
+  displayValidationSummary(validationResult, filename) {
+    console.log(chalk.cyan(`\n📊 ${filename} - 语义校验结果摘要:`));
+    console.log(chalk.gray('─'.repeat(60)));
+    
+    console.log(`📈 总样本数: ${validationResult.totalSamples}`);
+    console.log(`✅ 有效样本: ${validationResult.validSamples.length}`);
+    console.log(`❌ 无效样本: ${validationResult.invalidSamples.length}`);
+    
+    if (validationResult.selectedSample) {
+      console.log(`🏆 推荐样本: 样本${validationResult.selectedSample.index}`);
+      console.log(`🎯 置信度: ${(validationResult.confidence * 100).toFixed(1)}%`);
+    }
+
+    if (validationResult.recommendations.length > 0) {
+      console.log(`⚠️  建议数: ${validationResult.recommendations.length}`);
+      validationResult.recommendations.forEach(rec => {
+        const icon = rec.priority === 'high' ? '🔴' : rec.priority === 'medium' ? '🟡' : '🟢';
+        console.log(`   ${icon} ${rec.message}`);
+      });
+    }
+
+    console.log(chalk.gray('─'.repeat(60)));
+  }
+
+  /**
+   * 处理校验后的结果
+   */
+  async processValidatedResult(validationResult, outPath, tempFilePath, filename) {
+    if (!validationResult.selectedSample) {
+      throw new Error('没有可用的校验结果');
+    }
+
+    const selectedContent = validationResult.selectedSample.content;
+    
+    // 使用CSV校验器确保格式正确
+    const csvValidation = await this.csvValidator.validateAndFix(selectedContent, filename);
+    const finalCsv = csvValidation.fixed;
+
+    // 保存校验报告
+    const reportPath = tempFilePath.replace('.jsonl', '_validation_report.json');
+    this.semanticValidator.exportValidationReport(validationResult, reportPath);
+
+    // 写入最终CSV
     this.ensureDir(path.dirname(outPath));
-    FileUtils.writeFile(outPath, csv, 'utf8');
-    this.logger.info(`写出CSV: ${outPath}`);
+    FileUtils.writeFile(outPath, finalCsv, 'utf8');
+    
+    this.logger.info(chalk.green(`✅ 写出CSV (经过语义校验): ${outPath}`));
+    this.logger.info(chalk.gray(`📋 校验报告: ${reportPath}`));
+
+    return { success: true, confidence: validationResult.confidence };
+  }
+
+  /**
+   * 处理单样本
+   */
+  async processSingleSample(filename, content, outPath, tempFilePath) {
+    const csvValidation = await this.csvValidator.validateAndFix(content, filename);
+    const finalCsv = csvValidation.fixed;
+
+    // 保存简单校验报告
+    if (tempFilePath) {
+      const reportPath = tempFilePath.replace('.jsonl', '_simple_validation.json');
+      fs.writeFileSync(reportPath, JSON.stringify({
+        filename,
+        timestamp: new Date().toISOString(),
+        validation: csvValidation,
+        mode: 'single_sample'
+      }, null, 2), 'utf8');
+    }
+
+    this.ensureDir(path.dirname(outPath));
+    FileUtils.writeFile(outPath, finalCsv, 'utf8');
+    
+    this.logger.info(chalk.green(`✅ 写出CSV (单样本): ${outPath}`));
+    return { success: true, confidence: csvValidation.confidence };
+  }
+
+  /**
+   * 使用简单投票处理（兼容原逻辑）
+   */
+  async processWithSimpleVoting(results, outPath, tempFilePath, filename) {
+    // 使用原始的多数投票逻辑
+    const counter = new Map();
+    for (const r of results) counter.set(r, (counter.get(r) || 0) + 1);
+    const finalText = [...counter.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+    // 应用基本格式修复
+    const csvValidation = await this.csvValidator.validateAndFix(finalText, filename);
+    const finalCsv = csvValidation.fixed;
+
+    this.ensureDir(path.dirname(outPath));
+    FileUtils.writeFile(outPath, finalCsv, 'utf8');
+    
+    this.logger.info(chalk.green(`✅ 写出CSV (简单投票): ${outPath}`));
+    return { success: true, confidence: 0.7 }; // 默认置信度
   }
 
 

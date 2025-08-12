@@ -1,0 +1,86 @@
+{
+  "validation_rules": {
+    "description": "CSV校验规则配置",
+    "structure_validation": {
+      "header_check": {
+        "enabled": true,
+        "exact_match": true,
+        "expected": "编号,问题,答案,答题人,专业",
+        "case_sensitive": false
+      },
+      "field_count": {
+        "enabled": true,
+        "expected_count": 5,
+        "tolerance": 0
+      },
+      "encoding_check": {
+        "enabled": true,
+        "expected_encoding": "utf-8",
+        "bom_handling": "remove"
+      }
+    },
+    "content_validation": {
+      "empty_fields": {
+        "required_fields": ["编号", "答案"],
+        "warning_fields": ["问题", "答题人", "专业"],
+        "action_on_violation": "warn"
+      },
+      "data_types": {
+        "编号": {
+          "type": "string",
+          "pattern": "^\\d+$",
+          "max_length": 10
+        },
+        "问题": {
+          "type": "string",
+          "max_length": 500,
+          "allow_empty": true
+        },
+        "答案": {
+          "type": "string",
+          "max_length": 10000,
+          "min_length": 1,
+          "prohibited_patterns": [
+            "```csv",
+            "编号,问题,答案,答题人,专业"
+          ]
+        },
+        "答题人": {
+          "type": "string",
+          "max_length": 50,
+          "allow_empty": true
+        },
+        "专业": {
+          "type": "string",
+          "max_length": 100,
+          "allow_empty": true
+        }
+      }
+    },
+    "quality_checks": {
+      "duplicate_detection": {
+        "enabled": true,
+        "check_fields": ["编号"],
+        "action": "warn"
+      },
+      "consistency_check": {
+        "enabled": true,
+        "check_answer_format": true,
+        "min_answer_length": 10
+      }
+    }
+  },
+  "auto_fix_settings": {
+    "enabled": true,
+    "backup_original": true,
+    "max_attempts": 3,
+    "fix_priority": [
+      "remove_header_in_answer",
+      "remove_code_fence_in_answer", 
+      "normalize_line_breaks",
+      "fix_broken_quotes",
+      "remove_duplicate_headers",
+      "fix_field_count"
+    ]
+  }
+}

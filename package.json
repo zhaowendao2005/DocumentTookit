@@ -20,7 +20,8 @@
     "js-yaml": "^4.1.0",
     "mammoth": "^1.6.0",
     "openai": "^4.55.0",
-    "ora": "^5.4.1"
+    "ora": "^5.4.1",
+    "papaparse": "^5.4.1"
   },
   "keywords": [
     "llm",

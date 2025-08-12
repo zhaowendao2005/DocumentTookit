@@ -1,0 +1,76 @@
+{
+  "common_issues": {
+    "description": "常见CSV格式问题模式库",
+    "patterns": [
+      {
+        "id": "header_in_content",
+        "name": "内容中包含表头",
+        "description": "答案字段中包含CSV表头信息",
+        "severity": "high",
+        "pattern": "```csv\\s*编号,问题,答案,答题人,专业",
+        "examples": [
+          "```csv 编号,问题,答案,答题人,专业 1,\"问题内容\",\"答案内容\"",
+          "```csv编号,问题,答案,答题人,专业\n1,\"问题\",\"答案\""
+        ],
+        "fix_strategy": "remove_pattern"
+      },
+      {
+        "id": "incomplete_code_fence",
+        "name": "不完整的代码围栏",
+        "description": "代码围栏标记不完整或位置错误",
+        "severity": "medium",
+        "pattern": "```\\s*csv\\s*(?!.*```)|```\\s*(?=\\d+,)",
+        "fix_strategy": "remove_fence_markers"
+      },
+      {
+        "id": "nested_quotes",
+        "name": "嵌套引号问题",
+        "description": "字段内容包含未正确转义的引号",
+        "severity": "medium", 
+        "pattern": "\"[^\"]*\"[^,]*\"[^\"]*\"",
+        "fix_strategy": "escape_quotes"
+      },
+      {
+        "id": "field_overflow",
+        "name": "字段内容溢出",
+        "description": "某个字段的内容意外包含了多个逻辑字段",
+        "severity": "high",
+        "pattern": "\"[^\"]*编号,问题,答案,答题人,专业[^\"]*\"",
+        "fix_strategy": "content_cleanup"
+      },
+      {
+        "id": "malformed_newlines",
+        "name": "格式错误的换行",
+        "description": "字段内容中的换行符导致行结构破坏",
+        "severity": "medium",
+        "pattern": "\"[^\"]*\\n[^\"]*\"(?!,|$)",
+        "fix_strategy": "normalize_newlines"
+      }
+    ]
+  },
+  "detection_strategies": {
+    "header_contamination": {
+      "confidence_threshold": 0.8,
+      "indicators": [
+        "编号,问题,答案,答题人,专业",
+        "```csv",
+        "csv format",
+        "表头信息"
+      ]
+    },
+    "structure_corruption": {
+      "confidence_threshold": 0.9,
+      "indicators": [
+        "field_count_mismatch",
+        "unescaped_quotes", 
+        "broken_line_structure"
+      ]
+    }
+  },
+  "fix_templates": {
+    "standard_header": "编号,问题,答案,答题人,专业",
+    "empty_row_template": "\"{index}\",\"\",\"{content}\",\"\",\"\"",
+    "quote_escape_pattern": "\"\"",
+    "line_separator": "\n"
+  }
+}

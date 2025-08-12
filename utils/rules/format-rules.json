@@ -1,0 +1,71 @@
+{
+  "csv_format_rules": {
+    "description": "CSV格式修复规则配置",
+    "rules": [
+      {
+        "id": "remove_header_in_answer",
+        "name": "移除答案字段中的表头信息",
+        "pattern": "```csv\\s*编号,问题,答案,答题人,专业\\s*",
+        "replacement": "",
+        "flags": "gi",
+        "priority": 10,
+        "description": "检测并移除答案字段中包含的CSV表头信息"
+      },
+      {
+        "id": "remove_code_fence_in_answer",
+        "name": "移除答案字段中的代码围栏",
+        "pattern": "```\\s*csv\\s*|```\\s*",
+        "replacement": "",
+        "flags": "gi",
+        "priority": 9,
+        "description": "移除答案字段中残留的代码围栏标记"
+      },
+      {
+        "id": "fix_broken_quotes",
+        "name": "修复破损的引号",
+        "pattern": "(?<!^|,)\"(?!,|$)",
+        "replacement": "\"\"",
+        "flags": "g",
+        "priority": 8,
+        "description": "修复字段内部未正确转义的引号"
+      },
+      {
+        "id": "normalize_line_breaks",
+        "name": "标准化换行符",
+        "pattern": "\\r\\n|\\r",
+        "replacement": "\\n",
+        "flags": "g",
+        "priority": 7,
+        "description": "将所有换行符标准化为\\n"
+      },
+      {
+        "id": "fix_field_count",
+        "name": "修复字段数量",
+        "check": "field_count_validation",
+        "expected_fields": 5,
+        "priority": 6,
+        "description": "确保每行包含正确的字段数量（5个字段）"
+      },
+      {
+        "id": "remove_duplicate_headers",
+        "name": "移除重复表头",
+        "pattern": "^编号,问题,答案,答题人,专业\\s*\\n(?=编号,问题,答案,答题人,专业)",
+        "replacement": "",
+        "flags": "gm",
+        "priority": 5,
+        "description": "移除重复出现的表头行"
+      }
+    ]
+  },
+  "content_validation": {
+    "expected_headers": ["编号", "问题", "答案", "答题人", "专业"],
+    "required_fields": ["编号", "答案"],
+    "max_field_length": {
+      "编号": 10,
+      "问题": 500,
+      "答案": 10000,
+      "答题人": 50,
+      "专业": 100
+    }
+  }
+}

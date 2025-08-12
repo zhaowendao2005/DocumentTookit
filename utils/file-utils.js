@@ -64,6 +64,7 @@ class FileUtils {
             switch (ext) {
                 case '.txt':
                 case '.md':
+                case '.csv':
                     return fs.readFileSync(filePath, 'utf8');
                     
                 case '.docx':
