@@ -120,7 +120,8 @@ class FileProcessor {
 
       const times = requestCount;
       for (let i = 0; i < times; i++) {
-        tasks.push({ rel, file, repIndex: i, total: times });
+        const taskId = options?.controller ? options.controller.createTaskId({ filename: rel }) : null;
+        tasks.push({ rel, file, repIndex: i, total: times, taskId });
       }
     }
 
@@ -135,8 +136,9 @@ class FileProcessor {
       while (true) {
         const current = tasks[taskIndex++];
         if (!current) break;
+        if (options?.controller && options.controller.isStopped()) break;
 
-        const { rel, file, repIndex, total } = current;
+        const { rel, file, repIndex, total, taskId } = current;
         try {
           // 读取内容（带缓存）
           let content = contentCache.get(rel);
@@ -146,6 +148,8 @@ class FileProcessor {
           }
 
           this.logger.info(`发送中: ${rel} [${repIndex + 1}/${total}] -> ${modelSel.provider}/${modelSel.model}`);
+          if (options?.controller) options.controller.updateTask(taskId, { stage: 'running' });
+          if (options?.controller && options.controller.isStopped()) throw Object.assign(new Error('用户停止'), { code: 'USER_ABORT' });
           const { text, raw } = await this.requestLLM(modelSel, content, (this.lastTimeouts || this.config.network || {}));
 
           // 记录 token 用量（优先真实 usage，回退估算）
@@ -171,10 +175,12 @@ class FileProcessor {
           const meta = fileMetaMap.get(rel);
           fs.appendFileSync(meta.tempFilePath, JSON.stringify({ index: repIndex, text, usage }) + '\n', 'utf8');
           meta.results.push(text);
+          if (options?.controller) options.controller.updateTask(taskId, { stage: 'done' });
         } catch (err) {
           const meta = fileMetaMap.get(rel);
           meta.errors += 1;
           this.logger.error(`请求失败: ${rel} [${repIndex + 1}/${total}] - ${err.message}`);
+          if (options?.controller) options.controller.updateTask(taskId, { stage: 'done' });
         }
       }
     };
@@ -188,19 +194,23 @@ class FileProcessor {
     const fileSummaries = [];
     for (const [rel, meta] of fileMetaMap.entries()) {
       try {
+        if (options?.controller && options.controller.isStopped() && meta.results.length === 0) {
+          throw Object.assign(new Error('用户停止，未产生结果'), { code: 'USER_ABORT' });
+        }
         await this.finalizeFileResult(rel, meta, requestCount);
         succeeded++;
         fileSummaries.push({ filename: rel, mode: 'classic', succeeded: true, fallback: false });
       } catch (e) {
         failed++;
         this.logger.error(`汇总失败: ${rel} - ${e.message}`);
-        const errorInfo = classifier.classify(e, { stage: 'validation' });
+        const stage = (e && e.code === 'USER_ABORT') ? 'cancel' : 'validation';
+        const errorInfo = classifier.classify(e, { stage });
         const fileAbs = meta.file?.path || '';
         // 记录错误并按原因入库
         reporter.addRecord({
           filename: rel,
           inputPath: fileAbs,
-          stage: 'validation',
+          stage,
           type: errorInfo.type,
           message: errorInfo.message,
           status: errorInfo.status,

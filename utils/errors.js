@@ -23,6 +23,7 @@ class ErrorClassifier {
       'fallback_failed',
       'write_error',
       'unsupported_file',
+      'user_cancelled',
       'unknown_error',
     ];
   }
@@ -42,6 +43,7 @@ class ErrorClassifier {
     if (stage === 'validation') return this._normalize('validation_error', err);
     if (stage === 'write') return this._normalize('write_error', err);
     if (stage === 'fallback') return this._normalize('fallback_failed', err);
+    if (stage === 'cancel') return this._normalize('user_cancelled', err);
 
     // 具备 axios 风格的错误
     const anyErr = err || {};
@@ -62,6 +64,12 @@ class ErrorClassifier {
       if (status === 429) return this._normalize('rate_limit', { message: this._reason(anyErr), status });
       if (status >= 500) return this._normalize('server_error', { message: this._reason(anyErr), status });
       if (status >= 400) return this._normalize('client_error', { message: this._reason(anyErr), status });
+    }
+
+    // 用户停止/取消
+    const codeLower = (code || '').toString().toLowerCase();
+    if (codeLower === 'user_abort' || codeLower === 'aborted' || codeLower === 'canceled') {
+      return this._normalize('user_cancelled', { message, code });
     }
 
     // fallback: 若来自 LLMClient 的标准化文本

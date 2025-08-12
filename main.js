@@ -8,6 +8,7 @@ const FileProcessor = require('./modules/file-processor');
 const ModelTester = require('./modules/model-tester');
 const CsvMerger = require('./utils/csv-merger');
 const TextSplitterUI = require('./modules/text-splitter-ui');
+const { RunController } = require('./utils/run-controller');
 
 class MainApplication {
     constructor() {
@@ -133,6 +134,25 @@ class MainApplication {
             // 执行批量处理 / 或错误重处理
             const processor = new FileProcessor({ config: this.config, logger: console });
             this.ui.showInfo('开始批量处理...');
+            // 注册停止热键（s）
+            const controller = new RunController();
+            try {
+                if (process.stdin.isTTY) {
+                    process.stdin.setRawMode(true);
+                    process.stdin.resume();
+                    process.stdin.on('data', (buf) => {
+                        const key = buf.toString().toLowerCase();
+                        if (key === 's') {
+                            controller.stop('user pressed s to stop');
+                            this.ui.showWarning('收到停止指令，未开始与进行中的请求将标记 user_cancelled');
+                        } else if (key === '\u0003') { // Ctrl+C
+                            controller.stop('SIGINT');
+                            this.ui.showWarning('收到 Ctrl+C，停止当前任务');
+                        }
+                    });
+                    this.ui.showInfo('按 s 停止当前任务');
+                }
+            } catch (_) {}
             let result;
             const mode = setup.mode || (this.config.processing?.default_mode || 'classic');
             // 错误重处理模式：复用原 run 输出目录
@@ -178,7 +198,7 @@ class MainApplication {
                     { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
                     setup.inputs,
                     setup.outputDir,
-                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts, ...extraOptions }
+                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts, controller, ...extraOptions }
                 );
 
                 // 生成运行总结报告（md + json）
@@ -235,7 +255,7 @@ class MainApplication {
                     { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
                     setup.inputs,
                     setup.outputDir,
-                    { ...extraOptions }
+                    { controller, ...extraOptions }
                 );
                 // 经典模式同样生成运行总结
                 try {
@@ -272,6 +292,11 @@ class MainApplication {
             }
 
             this.ui.showSuccess(`处理完成：总数=${result.total} 成功=${result.succeeded} 失败=${result.failed}`);
+            try {
+                if (process.stdin.isTTY) {
+                    process.stdin.setRawMode(false);
+                }
+            } catch (_) {}
             
         } catch (error) {
             this.ui.showError(`批量LLM处理失败: ${error.message}`);

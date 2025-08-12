@@ -65,7 +65,7 @@ class StructuredFileProcessor {
 
     // 构建任务并发执行（统一一起发送，而非逐个分批）
     const concurrency = Math.max(1, this.config.concurrency?.max_concurrent_requests || 1);
-    const tasks = files.map((file) => ({ file }));
+    const tasks = files.map((file) => ({ file, taskId: options?.controller ? options.controller.createTaskId({ filename: file.relativePath || path.basename(file.path) }) : null }));
     let index = 0;
 
     const stats = { total: files.length, succeeded: 0, failed: 0, fallback: 0, files: [] };
@@ -76,6 +76,7 @@ class StructuredFileProcessor {
       while (true) {
         const current = tasks[index++];
         if (!current) break;
+        if (options?.controller && options.controller.isStopped()) break;
         const file = current.file;
         const rel = file.relativePath || path.basename(file.path);
         const outPath = path.join(runOutputDir, rel.replace(path.extname(rel), '.csv'));
@@ -84,6 +85,8 @@ class StructuredFileProcessor {
         let record = { filename: rel, mode: 'structured', succeeded: false, fallback: false, error: null };
         try {
           const content = await FileUtils.readFile(file.path);
+          if (options?.controller) options.controller.updateTask(current.taskId, { stage: 'running' });
+          if (options?.controller && options.controller.isStopped()) throw Object.assign(new Error('用户停止'), { code: 'USER_ABORT' });
           const { finalCsv, repairAttemptsUsed, validationErrors } = await this._processOneFile({ modelSel, content, filename: rel, tempDir, promptVersion, maxRepairAttempts });
           FileUtils.writeFile(outPath, finalCsv, 'utf8');
           this.logger.info(chalk.green(`✅ 写出CSV: ${outPath}`));
@@ -91,7 +94,9 @@ class StructuredFileProcessor {
           record.repairAttemptsUsed = repairAttemptsUsed;
           record.validationErrors = validationErrors || [];
           stats.succeeded++;
+          if (options?.controller) options.controller.updateTask(current.taskId, { stage: 'done' });
         } catch (e) {
+          if (options?.controller) options.controller.updateTask(current.taskId, { stage: 'done' });
           record.error = e.message;
           this.logger.warn(chalk.yellow(`结构化模式失败: ${rel} - ${e.message}`));
           if (this.config.processing?.allow_fallback && (this.config.processing?.fallback_mode === 'classic')) {
@@ -107,11 +112,12 @@ class StructuredFileProcessor {
               this.logger.error(`回退经典模式也失败: ${rel} - ${ee.message}`);
               stats.failed++;
               // 归档 fallback 失败
-              const info = classifier.classify(ee, { stage: 'fallback' });
+              const stage = (ee && ee.code === 'USER_ABORT') ? 'cancel' : 'fallback';
+              const info = classifier.classify(ee, { stage });
               reporter.addRecord({
                 filename: rel,
                 inputPath: file.path,
-                stage: 'fallback',
+                stage,
                 type: info.type,
                 message: info.message,
                 status: info.status,
@@ -124,11 +130,12 @@ class StructuredFileProcessor {
           } else {
             stats.failed++;
             // 归档结构化失败（一般为 parse/validation）
-            const info = classifier.classify(e, { stage: 'validation' });
+            const stage = (e && e.code === 'USER_ABORT') ? 'cancel' : 'validation';
+            const info = classifier.classify(e, { stage });
             reporter.addRecord({
               filename: rel,
               inputPath: file.path,
-              stage: 'validation',
+              stage,
               type: info.type,
               message: info.message,
               status: info.status,

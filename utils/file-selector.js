@@ -83,6 +83,14 @@ class FileSelector {
                 pageSize: 15
             });
 
+            // 若未选择任何项，进入“导航模式”（list），支持直接回车进入目录/返回上级
+            if (!selections || selections.length === 0) {
+                const navigated = await this._promptNavigateList(type);
+                if (navigated) {
+                    continue; // 导航后继续多选
+                }
+            }
+
             // 处理选择结果
             const selectedFiles = [];
             const navigationActions = [];
@@ -112,7 +120,7 @@ class FileSelector {
                 const navAction = navigationActions[0]; // 只处理第一个导航操作
                 const handled = await this._handleNavigation(navAction);
                 if (!handled) {
-                    continue; // 继续选择
+                    continue; // 导航后继续选择
                 }
             }
 
@@ -120,6 +128,44 @@ class FileSelector {
             if (selectedFiles.length > 0) {
                 return await this._confirmMultipleSelection(selectedFiles);
             }
+        }
+    }
+
+    /**
+     * 列表导航：当用户在多选界面按回车但未勾选任何项时触发
+     */
+    async _promptNavigateList(type) {
+        try {
+            const entries = [];
+            if (this.currentPath !== path.parse(this.currentPath).root) {
+                entries.push({ name: chalk.blue('📁 .. (上级目录)'), value: '__UP__' });
+            }
+            if (this.history.length > 0) {
+                entries.push({ name: chalk.blue('⬅️  返回上一步'), value: '__BACK__' });
+            }
+            entries.push(new inquirer.Separator());
+            const items = fs.readdirSync(this.currentPath);
+            for (const item of items) {
+                const fullPath = path.join(this.currentPath, item);
+                try {
+                    const stat = fs.statSync(fullPath);
+                    if (stat.isDirectory() && (type === 'directory' || type === 'both')) {
+                        entries.push({ name: `📁 ${item}`, value: `__DIR__${fullPath}` });
+                    }
+                } catch {}
+            }
+            if (entries.length === 0) return false;
+            const ans = await inquirer.prompt([{
+                type: 'list',
+                name: 'nav',
+                message: `导航 (当前: ${chalk.cyan(this.currentPath)})`,
+                choices: entries,
+                pageSize: 15,
+            }]);
+            await this._handleNavigation(ans.nav);
+            return true;
+        } catch (_) {
+            return false;
         }
     }
 
@@ -340,9 +386,8 @@ class FileSelector {
                         if (type === 'directory' || type === 'both') {
                             choices.push({
                                 name: `📁 ${item}`,
-                                value: fullPath,
-                                short: item,
-                                isDirectory: true
+                                value: `__DIR__${fullPath}`,
+                                short: item
                             });
                         }
                     } else if (stat.isFile() && (type === 'file' || type === 'both')) {
@@ -352,8 +397,7 @@ class FileSelector {
                             choices.push({
                                 name: `${icon} ${item}`,
                                 value: fullPath,
-                                short: item,
-                                isDirectory: false
+                                short: item
                             });
                         }
                     }
@@ -394,6 +438,12 @@ class FileSelector {
                 return false; // 继续选择
                 
             default:
+                if (action.startsWith('__DIR__')) {
+                    const dirPath = action.substring(7);
+                    this.history.push(this.currentPath);
+                    this.currentPath = dirPath;
+                    return false; // 进入目录后继续选择
+                }
                 return false;
         }
     }
