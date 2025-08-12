@@ -36,7 +36,7 @@ class FileProcessor {
    * @param {string} inputDir
    * @param {string} outputDir
    */
-  async runBatch(modelSel, inputDir, outputDir) {
+  async runBatch(modelSel, input, outputDir) {
     // 保存最近一次交互配置的超时参数，供请求传递
     this.lastTimeouts = modelSel.timeouts || null;
     // 保存校验配置
@@ -48,7 +48,25 @@ class FileProcessor {
     this.ensureDir(runOutputDir);
     this.ensureDir(tempDir);
 
-    const files = await FileUtils.scanFiles(inputDir, ['.txt', '.md', '.docx']);
+    // 支持数组或单一路径
+    const inputs = Array.isArray(input) ? input : [input];
+    const files = [];
+    for (const target of inputs) {
+      try {
+        const stat = fs.statSync(target);
+        if (stat.isDirectory()) {
+          const list = await FileUtils.scanFiles(target, ['.txt', '.md', '.docx']);
+          files.push(...list);
+        } else {
+          // 单文件
+          const dir = path.dirname(target);
+          const rel = path.basename(target);
+          files.push({ path: target, name: rel, size: stat.size, modified: stat.mtime, relativePath: rel });
+        }
+      } catch (e) {
+        this.logger.warn(`输入无效或无法访问: ${target}`);
+      }
+    }
     this.logger.info(`共发现可处理文件: ${files.length}`);
     if (files.length === 0) return { total: 0, succeeded: 0, failed: 0 };
 
@@ -66,7 +84,7 @@ class FileProcessor {
     const fileMetaMap = new Map(); // rel -> { outPath, tempFilePath, results: [], errors: 0 }
 
     for (const file of files) {
-      const rel = file.relativePath || path.relative(inputDir, file.path);
+      const rel = file.relativePath || path.basename(file.path);
       const outPath = path.join(runOutputDir, rel.replace(path.extname(rel), '.csv'));
       const tempRelDir = path.join(tempDir, runId, path.dirname(rel));
       const tempFileBase = path.basename(rel, path.extname(rel));

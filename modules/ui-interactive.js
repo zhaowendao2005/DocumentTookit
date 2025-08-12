@@ -9,6 +9,14 @@ const gradient = require('gradient-string');
 class InteractiveUI {
     constructor() {
         this.spinner = null;
+        // 尝试注册文件树选择插件（空格选择，回车进入目录）
+        try {
+            const treePrompt = require('inquirer-file-tree-selection-prompt');
+            inquirer.registerPrompt('file-tree-selection', treePrompt);
+            this.hasFileTreePrompt = true;
+        } catch (e) {
+            this.hasFileTreePrompt = false;
+        }
     }
 
     /**
@@ -96,15 +104,15 @@ class InteractiveUI {
         // 1. 选择模型
         const modelSelection = await this.selectModel(config.providers);
         
-        // 2. 选择输入目录
-        const inputDir = await this.selectDirectory('输入文件目录', config.directories.input_dir);
+        // 2. 选择输入（支持目录树选择与多选）
+        const inputs = await this.selectInputs(config.directories.input_dir);
         
         // 3. 选择输出目录
         const outputDir = await this.selectDirectory('输出目录', config.directories.output_dir);
         
         // 4. 显示文件数量
-        const fileCount = await this.countFiles(inputDir);
-        console.log(chalk.green(`\n�� 发现 ${fileCount} 个待处理文件`));
+        const fileCount = await this.countFilesInTargets(inputs);
+        console.log(chalk.green(`\n✅ 发现 ${fileCount} 个待处理文件`));
         
         // 5. 配置校验
         const validationConfig = await this.configureValidation(config.validation);
@@ -114,7 +122,7 @@ class InteractiveUI {
 
         return {
             model: modelSelection,
-            inputDir: inputDir,
+            inputs: inputs,
             outputDir: outputDir,
             fileCount: fileCount,
             validation: validationConfig,
@@ -672,6 +680,55 @@ class InteractiveUI {
             connectTimeoutMs: ans.connectTimeoutMs,
             responseTimeoutMs: ans.responseTimeoutMs
         };
+    }
+
+    /**
+     * 使用文件树多选输入（空格选择，回车进入目录）。若插件不可用，回退为单目录输入。
+     * @param {string} rootDir
+     * @returns {Promise<string[]>} 选中的绝对路径列表
+     */
+    async selectInputs(rootDir) {
+        if (this.hasFileTreePrompt) {
+            const answer = await inquirer.prompt([
+                {
+                    type: 'file-tree-selection',
+                    name: 'paths',
+                    message: chalk.cyan('选择要处理的目录或文件: (空格选择，回车进入目录)'),
+                    root: rootDir,
+                    multiple: true,
+                    onlyShowValid: false
+                }
+            ]);
+            const val = answer.paths;
+            if (!val) return [rootDir];
+            return Array.isArray(val) ? val : [val];
+        }
+
+        // 回退：单目录输入
+        const dir = await this.selectDirectory('输入文件目录', rootDir);
+        return [dir];
+    }
+
+    /**
+     * 统计所选目标中的文件数（递归扫描目录，文件直接计数）
+     */
+    async countFilesInTargets(targets) {
+        const exts = ['.txt', '.md', '.docx'];
+        let total = 0;
+        for (const p of targets) {
+            try {
+                const stat = fs.statSync(p);
+                if (stat.isDirectory()) {
+                    const list = await this.scanFiles(p);
+                    total += list.filter(f => exts.includes(path.extname(f.path).toLowerCase())).length;
+                } else {
+                    if (exts.includes(path.extname(p).toLowerCase())) total += 1;
+                }
+            } catch (e) {
+                // ignore invalid paths
+            }
+        }
+        return total;
     }
 }
 

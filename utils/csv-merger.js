@@ -21,7 +21,7 @@ class CsvMerger {
     const csvFiles = await this.findCsvFiles(inputDir);
     
     if (csvFiles.length === 0) {
-      this.logger.warning('未找到任何CSV文件');
+      this.logger.warn('未找到任何CSV文件');
       return false;
     }
 
@@ -58,7 +58,7 @@ class CsvMerger {
     const success = await this.mergeCsvFiles(csvFiles, outputPath);
     
     if (success) {
-      this.logger.success(`CSV合并完成: ${outputFileName}`);
+      this.logger.info(`CSV合并完成: ${outputFileName}`);
       return true;
     } else {
       this.logger.error('CSV合并失败');
@@ -103,7 +103,7 @@ class CsvMerger {
    */
   async mergeCsvFiles(csvFiles, outputPath) {
     if (csvFiles.length === 0) {
-      this.logger.warning('没有CSV文件可合并');
+      this.logger.warn('没有CSV文件可合并');
       return false;
     }
 
@@ -133,7 +133,7 @@ class CsvMerger {
           // 检查表头是否一致
           const currentHeader = parseCsvLine(lines[0]);
           if (JSON.stringify(currentHeader) !== JSON.stringify(headerRow)) {
-            this.logger.warning(`文件 ${path.basename(csvFile)} 的表头与第一个文件不一致，跳过表头行`);
+            this.logger.warn(`文件 ${path.basename(csvFile)} 的表头与第一个文件不一致，跳过表头行`);
           }
         }
 
@@ -167,14 +167,14 @@ class CsvMerger {
         this.ensureDir(path.dirname(outputPath));
         
         await FileUtils.writeFile(outputPath, csvContent, 'utf8');
-        this.logger.success(`合并完成: ${path.basename(outputPath)} (共 ${allRows.length - 1} 行数据)`);
+        this.logger.info(`合并完成: ${path.basename(outputPath)} (共 ${allRows.length - 1} 行数据)`);
         return true;
       } catch (error) {
         this.logger.error(`写入合并文件失败: ${error.message}`);
         return false;
       }
     } else {
-      this.logger.warning('没有有效数据可合并');
+      this.logger.warn('没有有效数据可合并');
       return false;
     }
   }

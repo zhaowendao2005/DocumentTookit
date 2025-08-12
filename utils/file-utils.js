@@ -181,6 +181,40 @@ class FileUtils {
         
         return path.join(dir, `${name}${suffix}_${timestamp}${extension}`);
     }
+
+    /**
+     * 读取目录内容
+     * @param {string} dir - 目录路径
+     * @returns {Promise<Array>} 目录内容列表
+     */
+    static async readDir(dir) {
+        return new Promise((resolve, reject) => {
+            fs.readdir(dir, (err, files) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(files);
+                }
+            });
+        });
+    }
+
+    /**
+     * 获取文件状态
+     * @param {string} filePath - 文件路径
+     * @returns {Promise<Object>} 文件状态对象
+     */
+    static async getStat(filePath) {
+        return new Promise((resolve, reject) => {
+            fs.stat(filePath, (err, stats) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(stats);
+                }
+            });
+        });
+    }
 }
 
 module.exports = FileUtils;

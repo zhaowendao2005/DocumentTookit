@@ -122,7 +122,7 @@ class MainApplication {
             this.ui.showInfo('开始批量处理...');
             const result = await processor.runBatch(
                 { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
-                setup.inputDir,
+                setup.inputs,
                 setup.outputDir
             );
 
