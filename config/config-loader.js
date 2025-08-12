@@ -9,7 +9,20 @@ class ConfigLoader {
      */
     static async load() {
         try {
-            const configPath = path.join(__dirname, 'env.yaml');
+            const configDir = __dirname;
+            const configPath = path.join(configDir, 'env.yaml');
+
+            // 启动容错：将 env.yaml.example 复制为 env.example（若不存在）
+            try {
+                const exampleSrc = path.join(configDir, 'env.yaml.example');
+                const exampleDst = path.join(configDir, 'env.example');
+                if (fs.existsSync(exampleSrc) && !fs.existsSync(exampleDst)) {
+                    fs.copyFileSync(exampleSrc, exampleDst);
+                    console.log('📄 已生成示例: config/env.example (来自 env.yaml.example)');
+                }
+            } catch (e) {
+                console.warn('⚠️ 无法生成示例 env.example:', e.message);
+            }
             
             if (!fs.existsSync(configPath)) {
                 throw new Error(`配置文件不存在: ${configPath}`);

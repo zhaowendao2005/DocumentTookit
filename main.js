@@ -2,6 +2,9 @@ const chalk = require('chalk');
 const boxen = require('boxen');
 const gradient = require('gradient-string');
 const ConfigLoader = require('./config/config-loader');
+const { runStartupDiagnostics } = require('./utils/diagnostics');
+const fs = require('fs');
+const path = require('path');
 const InteractiveUI = require('./modules/ui-interactive');
 const DocxToMdConverter = require('./tools/docx_to_md_converter');
 const FileProcessor = require('./modules/file-processor');
@@ -9,6 +12,33 @@ const ModelTester = require('./modules/model-tester');
 const CsvMerger = require('./utils/csv-merger');
 const TextSplitterUI = require('./modules/text-splitter-ui');
 const { RunController } = require('./utils/run-controller');
+
+// 全局未捕获错误兜底（写入 app/data/logs/unhandled.log）
+function setupGlobalErrorHandlers() {
+    const appLogDir = path.join(process.cwd(), 'app', 'data', 'logs');
+    try { fs.mkdirSync(appLogDir, { recursive: true }); } catch {}
+    const logFile = path.join(appLogDir, 'unhandled.log');
+    const write = (prefix, err) => {
+        const msg = `[${new Date().toISOString()}] ${prefix}: ${err && err.stack ? err.stack : (err && err.message) || String(err)}\n`;
+        try { fs.appendFileSync(logFile, msg, 'utf8'); } catch {}
+        try { console.error(chalk.red(prefix + ':'), err && err.message ? err.message : err); } catch {}
+    };
+    process.on('uncaughtException', (err) => write('uncaughtException', err));
+    process.on('unhandledRejection', (reason) => write('unhandledRejection', reason));
+}
+
+setupGlobalErrorHandlers();
+
+const argv = process.argv.slice(2);
+const flagDiag = argv.includes('--diag');
+const flagDiagOnError = argv.includes('--diag-on-error');
+
+if (flagDiag) {
+    (async () => {
+        await runStartupDiagnostics({ pingProvider: true, logToConsole: true });
+        process.exit(0);
+    })();
+}
 
 class MainApplication {
     constructor() {
@@ -527,8 +557,11 @@ async function main() {
 
 // 如果直接运行此脚本，则执行主函数
 if (require.main === module) {
-    main().catch(error => {
+    main().catch(async (error) => {
         console.error(chalk.red('❌ 程序执行失败:'), error.message);
+        if (flagDiagOnError) {
+            try { await runStartupDiagnostics({ pingProvider: true, logToConsole: true }); } catch {}
+        }
         process.exit(1);
     });
 }
