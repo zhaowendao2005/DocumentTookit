@@ -4,6 +4,8 @@ const gradient = require('gradient-string');
 const ConfigLoader = require('./config/config-loader');
 const InteractiveUI = require('./modules/ui-interactive');
 const DocxToMdConverter = require('./tools/docx_to_md_converter');
+const FileProcessor = require('./modules/file-processor');
+const ModelTester = require('./modules/model-tester');
 
 class MainApplication {
     constructor() {
@@ -64,6 +66,10 @@ class MainApplication {
                         await this.handleDocxToMd();
                         break;
                         
+                    case 'model_test':
+                        await this.handleModelTest();
+                        break;
+                        
                     case 'config':
                         await this.handleConfig();
                         break;
@@ -103,8 +109,19 @@ class MainApplication {
                 return;
             }
 
-            this.ui.showInfo('批量LLM处理功能正在开发中...');
-            // TODO: 实现批量LLM处理逻辑
+            // 确保目录存在
+            ConfigLoader.ensureDirectories(this.config);
+
+            // 执行批量处理
+            const processor = new FileProcessor({ config: this.config, logger: console });
+            this.ui.showInfo('开始批量处理...');
+            const result = await processor.runBatch(
+                { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
+                setup.inputDir,
+                setup.outputDir
+            );
+
+            this.ui.showSuccess(`处理完成：总数=${result.total} 成功=${result.succeeded} 失败=${result.failed}`);
             
         } catch (error) {
             this.ui.showError(`批量LLM处理失败: ${error.message}`);
@@ -137,6 +154,37 @@ class MainApplication {
             
         } catch (error) {
             this.ui.showError(`Docx转Md转换失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 处理模型测试
+     */
+    async handleModelTest() {
+        try {
+            const testConfig = await this.ui.configureModelTest(this.config);
+            
+            if (!testConfig) {
+                this.ui.showWarning('用户取消操作');
+                return;
+            }
+
+            // 执行模型测试
+            const tester = new ModelTester(this.config);
+            const results = await tester.runTest(testConfig);
+            
+            if (results && results.length > 0) {
+                // 询问是否导出测试报告
+                const exportReport = await this.ui.confirmAction('是否导出测试报告到JSON文件？', false);
+                if (exportReport) {
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    const reportPath = `./output/model_test_report_${timestamp}.json`;
+                    tester.exportTestReport(results, reportPath);
+                }
+            }
+            
+        } catch (error) {
+            this.ui.showError(`模型测试失败: ${error.message}`);
         }
     }
 

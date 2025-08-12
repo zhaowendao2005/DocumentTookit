@@ -51,6 +51,11 @@ class InteractiveUI {
                 description: '批量转换Word文档为Markdown格式'
             },
             {
+                name: '🧪 模型测试',
+                value: 'model_test',
+                description: '测试LLM模型的可用性和响应质量'
+            },
+            {
                 name: '⚙️  配置管理',
                 value: 'config',
                 description: '管理LLM提供商和系统配置'
@@ -99,12 +104,16 @@ class InteractiveUI {
         // 5. 配置校验
         const validationConfig = await this.configureValidation(config.validation);
 
+        // 6. 覆盖时间参数
+        const timeoutConfig = await this.configureTimeouts(config.network || {});
+
         return {
             model: modelSelection,
             inputDir: inputDir,
             outputDir: outputDir,
             fileCount: fileCount,
-            validation: validationConfig
+            validation: validationConfig,
+            timeouts: timeoutConfig
         };
     }
 
@@ -456,6 +465,159 @@ class InteractiveUI {
             name: 'continue',
             message: chalk.cyan('按回车键继续...')
         }]);
+    }
+
+    /**
+     * 配置模型测试
+     */
+    async configureModelTest(config) {
+        console.log(chalk.cyan('\n🧪 配置模型测试...\n'));
+
+        const testTypes = [
+            {
+                name: '🔍 测试单个模型',
+                value: 'single',
+                description: '选择并测试特定的模型'
+            },
+            {
+                name: '🏢 测试单个提供商',
+                value: 'provider',
+                description: '测试指定提供商的所有模型'
+            },
+            {
+                name: '🌐 测试全部模型',
+                value: 'all',
+                description: '测试所有配置的模型'
+            }
+        ];
+
+        const testTypeAnswer = await inquirer.prompt([{
+            type: 'list',
+            name: 'testType',
+            message: chalk.cyan('请选择测试类型:'),
+            choices: testTypes
+        }]);
+
+        let testConfig = { testType: testTypeAnswer.testType };
+
+        switch (testTypeAnswer.testType) {
+            case 'single':
+                const modelSelection = await this.selectModel(config.providers);
+                testConfig.model = modelSelection;
+                break;
+
+            case 'provider':
+                const providerChoices = config.providers.map(provider => ({
+                    name: `${provider.name} (${provider.models.length}个模型)`,
+                    value: provider.name
+                }));
+                const providerAnswer = await inquirer.prompt([{
+                    type: 'list',
+                    name: 'provider',
+                    message: chalk.cyan('请选择要测试的提供商:'),
+                    choices: providerChoices
+                }]);
+                testConfig.provider = providerAnswer.provider;
+                break;
+
+            case 'all':
+                // 不需要额外配置
+                break;
+        }
+
+        // 配置测试参数
+        const testParams = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'testPrompt',
+                message: chalk.cyan('测试提示词:'),
+                default: '请简单回复"测试成功"',
+                validate: (input) => {
+                    if (!input || input.trim() === '') {
+                        return chalk.red('请输入测试提示词');
+                    }
+                    return true;
+                }
+            },
+            {
+                type: 'number',
+                name: 'timeout',
+                message: chalk.cyan('响应超时时间(秒):'),
+                default: (config.network?.response_timeout_ms || 60000) / 1000,
+                validate: (input) => {
+                    if (input < 5 || input > 600) {
+                        return chalk.red('响应超时必须在5-600秒之间');
+                    }
+                    return true;
+                }
+            },
+            {
+                type: 'number',
+                name: 'connectTimeout',
+                message: chalk.cyan('连接超时时间(毫秒):'),
+                default: config.network?.connect_timeout_ms || 3000,
+                validate: (input) => {
+                    if (input < 200 || input > 30000) {
+                        return chalk.red('连接超时必须在200-30000毫秒之间');
+                    }
+                    return true;
+                }
+            },
+            {
+                type: 'confirm',
+                name: 'confirm',
+                message: chalk.yellow('确认开始测试？'),
+                default: true
+            }
+        ]);
+
+        if (!testParams.confirm) {
+            return null;
+        }
+
+        return {
+            ...testConfig,
+            testPrompt: testParams.testPrompt,
+            timeout: testParams.timeout * 1000, // 响应超时（ms）
+            connectTimeout: testParams.connectTimeout
+        };
+    }
+
+    /**
+     * 配置网络超时参数
+     */
+    async configureTimeouts(defaults = {}) {
+        const ans = await inquirer.prompt([
+            {
+                type: 'number',
+                name: 'connectTimeoutMs',
+                message: chalk.cyan('连接超时时间(毫秒):'),
+                default: defaults.connect_timeout_ms || 3000,
+                validate: (input) => {
+                    if (input < 200 || input > 30000) {
+                        return chalk.red('连接超时必须在200-30000毫秒之间');
+                    }
+                    return true;
+                }
+            },
+            {
+                type: 'number',
+                name: 'responseTimeoutMs',
+                message: chalk.cyan('响应超时时间(毫秒):'),
+                default: defaults.response_timeout_ms || 60000,
+                validate: (input) => {
+                    if (input < 5000 || input > 600000) {
+                        return chalk.red('响应超时必须在5000-600000毫秒之间');
+                    }
+                    return true;
+                }
+            }
+        ]);
+
+        return {
+            connectTimeoutMs: ans.connectTimeoutMs,
+            responseTimeoutMs: ans.responseTimeoutMs
+        };
     }
 }
 

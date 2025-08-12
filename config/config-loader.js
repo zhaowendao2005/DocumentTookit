@@ -55,7 +55,7 @@ class ConfigLoader {
         });
 
         // 验证目录配置
-        const requiredDirs = ['input_dir', 'output_dir', 'candidate_tools_dir'];
+        const requiredDirs = ['input_dir', 'output_dir', 'temp_dir', 'candidate_tools_dir'];
         requiredDirs.forEach(dirKey => {
             if (!config.directories[dirKey]) {
                 throw new Error(`缺少目录配置: ${dirKey}`);
@@ -134,6 +134,7 @@ class ConfigLoader {
         const dirs = [
             config.directories.input_dir,
             config.directories.output_dir,
+            config.directories.temp_dir,
             config.directories.candidate_tools_dir
         ];
 
