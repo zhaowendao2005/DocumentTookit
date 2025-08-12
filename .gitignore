@@ -26,3 +26,4 @@ input
 output
 sourcefiles
 data/
+config/env.yaml
