@@ -1,0 +1,27 @@
+node_modules/
+json_output
+images
+.specstory
+chapters_split
+yaml/
+csv/
+*/__pycache__/
+*/__pycache__/*
+*/__pycache__/*/*
+*/__pycache__/*/*/*
+*/__pycache__/*/*/*/*
+*/__pycache__/*/*/*/*/*
+*/__pycache__/*/*/*/*/*/*
+*/__pycache__/*/*/*/*/*/*/*
+*/__pycache__/*/*/*/*/*/*/*/*
+*.pyc
+dist/
+# 开发环境数据目录（由Quasar自动管理）
+BioLabToolkit/.quasar/Data/
+REFERENCE
+BioLabToolkit/Backend/Python/build
+BioLabToolkit\.eslintrc-auto-import.json
+node_modules/
+input
+output
+sourcefiles
