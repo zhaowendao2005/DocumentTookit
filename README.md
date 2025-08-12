@@ -1,16 +1,26 @@
 # 文档处理集成工具
 
-一个功能强大的文档处理集成工具，支持多种文档格式转换、文本分割、LLM批量处理等功能。
+支持批量 LLM 处理、结构化解析、并发与重试、错误归档与重处理、文档转换、文本分割、CSV 合并等。
 
 ## 功能特性
 
-- 🚀 **多LLM提供商支持**：支持多种API提供商（Gemini、O3等）
-- 📄 **文档格式转换**：DOCX转Markdown格式
-- ✂️ **智能文本分割**：支持按章节、段落等方式分割文本
-- 📊 **批量处理**：支持大量文件的并发处理
-- ✅ **自动校验**：多次LLM回复的相似度校验
-- 🔧 **模块化设计**：各功能模块独立，便于扩展
-- 📝 **CSV输出**：标准化的CSV格式输出结果
+- 🚀 **多 LLM 提供商**：OpenAI 兼容接口，支持自定义 `base_url` 与多模型选择
+- 🧭 **两种输出模式**：
+  - Classic：LLM 直接输出 CSV
+  - Structured：LLM 输出 `rows JSON` → 本地校验/修复 → 转 CSV（可回退 Classic）
+- ⚡ **并发与超时**：最大并发可配、连接/响应超时可配
+- ♻️ **自动重试与错误分类**：HTTP/网络错误自动重试；失败按原因分类（429、5xx、超时、网络、校验等）
+- 🧩 **错误归档与重处理闭环**：
+  - 运行结束将失败文件按原因归档到 `error/<type>/`
+  - 支持在“选择输入方式”中进入“错误重处理批次（按时间倒序）”，对失败样本再次处理
+  - 成功后结果回写原时间戳目录；可自动清理 `error` 目录并更新 JSON 清单
+- ✅ **质量控制**：CSV 规则校验、语义一致性校验、多样本投票/推荐
+- 🔁 **回退策略**：结构化模式失败可回退 Classic
+- 📊 **运行总结**：生成 `run_summary.json` 与 `run_summary.md`（可选 LLM 总结）
+- 🔢 **Token 统计**：支持真实/估算用量记录
+- 📄 **文档转换**：DOCX → Markdown
+- ✂️ **文本分割**：正则与多级分割，交互式 UI
+- 🔗 **CSV 合并**：交互式选择目录合并 CSV
 
 ## 项目结构
 
@@ -20,13 +30,16 @@
 │   ├── config-loader.js       # 配置加载器
 │   └── env.yaml.example       # 配置文件示例
 ├── modules/
-│   ├── llm-client.js          # LLM客户端模块
+│   ├── llm-client.js          # LLM 客户端（OpenAI 兼容，含自动重试）
 │   ├── file-processor.js      # 文件处理模块
+│   ├── structured-file-processor.js # 结构化处理（rows JSON → CSV）
 │   ├── model-tester.js        # 模型测试模块
 │   ├── text-splitter-ui.js    # 文本分割UI模块
 │   └── ui-interactive.js      # 交互界面模块
 ├── utils/
 │   ├── file-utils.js          # 文件工具
+│   ├── errors.js              # 错误分类与归档工具
+│   ├── error-cleanup.js       # 重处理后清理（清空 error 与更新清单）
 │   ├── similarity.js          # 相似度计算
 │   ├── text-splitter.js       # 文本分割工具
 │   ├── token-counter.js       # Token计数器
@@ -54,7 +67,7 @@
 git clone https://github.com/your-username/文档处理集成工具.git
 cd 文档处理集成工具
 
-# 安装依赖
+# 安装依赖（Node >= 16）
 npm install
 ```
 
@@ -69,7 +82,7 @@ cp config/env.yaml.example config/env.yaml
 # 编辑配置文件，填入您的API密钥
 ```
 
-编辑 `config/env.yaml` 文件示例：
+编辑 `config/env.yaml` 文件示例（节选）：
 
 ```yaml
 # LLM提供商配置
@@ -93,15 +106,44 @@ directories:
   output_dir: "./data/output"
   temp_dir: "./data/temp"
 
-# 校验配置
-validation:
-  enable_multiple_requests: true
-  request_count: 3
-  similarity_threshold: 0.8
+# 网络与重试
+network:
+  connect_timeout_ms: 3000
+  response_timeout_ms: 60000
+retry:
+  enable_auto_retry: true
+  max_retry_count: 3
+  retry_delay_ms: 1000
+
+# 处理模式
+processing:
+  default_mode: classic   # classic | structured
+  allow_fallback: true
+  fallback_mode: classic
+
+# 结构化解析
+structured:
+  prompts_root: "./prompts/StructuredFileProcessor"
+  default_prompt_version: "Version1"
+  max_repair_attempts: 2
 
 # 并发控制
 concurrency:
-  max_concurrent_requests: 30
+  max_concurrent_requests: 16
+
+# 校验配置
+validation:
+  enable_multiple_requests: false
+  request_count: 3
+  similarity_threshold: 0.8
+
+# 错误清理（重处理成功后）
+errors:
+  export_input_copy: true
+  cleanup:
+    on_success: true
+    prune_fixed_entries: true
+    remove_empty_error_dir: true
 ```
 
 ### 3. 使用方法
@@ -113,16 +155,17 @@ concurrency:
 node main.js
 ```
 
-程序提供交互式菜单，包含以下功能：
-- 📄 批量文档处理（LLM处理）
-- 🔧 DOCX转Markdown工具
-- ✂️ 文本分割工具
-- 🔗 CSV合并工具
-- 🧪 模型连接测试
+程序提供交互式菜单，包含：
+- 🔄 批量 LLM 处理（Classic/Structured）
+- 🧩 Colipot 预置方案
+- 📄 DOCX → Markdown
+- ✂️ 文本分割
+- 📊 CSV 合并
+- 🧪 模型测试
 
 #### 独立工具使用
 
-**1. DOCX转Markdown**
+**1. DOCX 转 Markdown**
 ```bash
 node tools/docx_to_md_converter.js
 ```
@@ -136,18 +179,62 @@ node tools/text-splitter-cli.js
 node modules/text-splitter-ui.js
 ```
 
-**3. CSV合并工具**
+**3. CSV 合并工具**
 ```bash
 node utils/csv-merger.js
 ```
 
-## 详细功能说明
+## 使用教程（批量 LLM 处理）
 
-### 📄 批量文档处理
-- 支持`.txt`、`.md`文件的批量LLM处理
-- 自动生成标准化CSV输出
-- 支持多重验证和相似度检测
-- 可配置并发处理数量
+1) 选择模型与输出模式（Classic/Structured）
+
+2) 选择输入方式：
+- 🎯 增强多选：文件/目录多选
+- 📁 单目录：递归处理目录内所有支持文件
+- 📄 多文件：手动多选文件
+- 🛠 错误重处理批次：按时间倒序列出历史含 `error` 的批次，选中后自动收集失败文件再次处理（成功回写原目录）
+
+3) 选择输出目录（重处理模式下跳过）
+
+4) 可选配置：多次请求与相似度阈值、网络超时、结构化提示词版本与纠错回合
+
+5) 运行结束自动生成：
+- `run_summary.json` 与 `run_summary.md`
+- 出错文件按类型归档在 `error/`
+
+## 错误处理与重处理闭环
+
+### 错误分类（示例）
+- `rate_limit` (429)
+- `server_error` (5xx)
+- `client_error` (4xx)
+- `timeout` / `network_error`
+- `validation_error` / `parse_error`
+- `fallback_failed`
+
+### 输出目录结构（示例）
+```
+data/output/
+  └── 2025-08-13T02-51-08/
+      ├── 01张三.csv
+      ├── 02李四.csv
+      ├── run_summary.json
+      ├── run_summary.md
+      └── error/
+          ├── error_manifest.json
+          ├── client_error/
+          │   ├── 01张三.md
+          │   └── error.json
+          └── fallback_failed/
+              ├── 02李四.md
+              └── error.json
+```
+
+### 重处理流程
+1. 在“选择输入方式”中选择“🛠 错误重处理批次（按时间倒序）”
+2. 选择某次 `runId` 的错误目录或手动选择 `error` 目录
+3. 再次处理失败样本，成功结果回写原 `runId` 目录
+4. 成功后自动清理：删除对应错误样本、更新 `error.json` 与 `error_manifest.json`（可配置为“移除”或“标记 fixed”）；若全修复则清空/删除 `error` 目录
 
 ### 🔧 DOCX转Markdown
 - 将Word文档转换为Markdown格式
@@ -177,8 +264,9 @@ node utils/csv-merger.js
 - **directories**: 目录配置，指定输入、输出、临时文件目录
 - **concurrency**: 并发控制，设置最大并发请求数
 - **validation**: 校验配置，启用多重验证和相似度阈值
-- **retry**: 重试配置，自动重试失败的请求
+- **retry**: 重试配置（429/5xx/网络错误等自动重试）
 - **token_tracking**: Token统计，跟踪API使用量
+- **errors**: 错误归档与重处理清理策略（见示例）
 
 ### 相似度验证
 
@@ -194,14 +282,14 @@ node utils/csv-merger.js
 ### 输入格式
 - `.txt` - 纯文本文件
 - `.md` - Markdown文件
-- `.docx` - Word文档（需先转换为Markdown）
+- `.docx` - Word 文档（运行时自动转文本，或先转换为 Markdown）
 
 ### 输出格式
 - `.csv` - 标准CSV格式
 - `.jsonl` - JSON Lines格式（临时文件）
 - `.md` - Markdown格式（转换输出）
 
-## 输出示例
+## 输出示例（Classic）
 
 标准化的CSV格式输出：
 
@@ -216,29 +304,31 @@ node utils/csv-merger.js
 - **Node.js** >= 16.0.0
 - **npm** >= 7.0.0
 
-## 主要依赖
+## 主要依赖（与 package.json 对齐）
 
-- **@xenova/transformers** - 语义相似度计算
-- **inquirer** - 交互式命令行界面
-- **js-yaml** - YAML配置文件解析
-- **axios** - HTTP请求处理
-- **mammoth** - DOCX文件处理
-- **csv-parser** - CSV文件解析
-- **fast-csv** - CSV文件生成
+- `axios`：HTTP 请求
+- `openai`：OpenAI 兼容 SDK（可回退 axios）
+- `inquirer`：交互式 CLI
+- `js-yaml`：配置解析
+- `chalk` `ora` `gradient-string` `boxen`：CLI 体验
+- `papaparse`：CSV 处理
+- `mammoth`：DOCX 提取
+- `@xenova/transformers`：语义相似度
+- `cli-table3`：表格展示
 
 ## 常见问题
 
-### Q: 如何添加新的LLM提供商？
-A: 在`config/env.yaml`文件中的`providers`部分添加新的提供商配置即可。
+### Q: 如何添加新的 LLM 提供商？
+A: 在 `config/env.yaml` 的 `providers` 中增加条目，包含 `name/base_url/api_key/models`。
 
 ### Q: 如何调整并发处理数量？
-A: 修改`config/env.yaml`文件中的`concurrency.max_concurrent_requests`参数。
+A: 修改 `concurrency.max_concurrent_requests`。
 
 ### Q: 相似度阈值如何设置？
-A: 在`validation.similarity_threshold`中设置，建议值为0.7-0.9之间。
+A: 在 `validation.similarity_threshold` 设置，建议 0.7~0.9。
 
-### Q: 如何查看处理日志？
-A: 日志文件保存在`data/logs/`目录下，可以查看详细的处理记录。
+### Q: 错误重处理如何选择？
+A: 在“选择输入方式”时选择“🛠 错误重处理批次（按时间倒序）”。
 
 ## 许可证
 
@@ -256,11 +346,11 @@ MIT License
 
 ## 更新日志
 
+### v1.1.0
+- ♻️ 加入错误归档与重处理闭环（按原因分目录、候选批次选择、成功清理与清单更新）
+- 🔁 自动重试改进（HTTP/网络错误分类）
+- 🧭 结构化解析工作流（JSON 修复回合 + 校验 + 回退）
+- 📊 运行总结增强（错误统计）
+
 ### v1.0.0
-- ✨ 初始版本发布
-- 🚀 支持多LLM提供商
-- 📄 实现DOCX转Markdown功能
-- ✂️ 添加文本分割工具
-- 🔗 添加CSV合并功能
-- 🧪 添加模型测试功能
-- ✅ 实现相似度验证算法
+- 初始版本发布：多提供商、DOCX→MD、文本分割、CSV 合并、相似度验证
