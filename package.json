@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node main.js",
     "dev": "node --inspect main.js",
-    "docx2md": "node tools/docx_to_md_converter.js"
+    "docx2md": "node tools/docx_to_md_converter.js",
+    "text-splitter": "node tools/text-splitter-cli.js"
   },
   "dependencies": {
     "@xenova/transformers": "^2.15.0",

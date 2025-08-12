@@ -7,6 +7,7 @@ const DocxToMdConverter = require('./tools/docx_to_md_converter');
 const FileProcessor = require('./modules/file-processor');
 const ModelTester = require('./modules/model-tester');
 const CsvMerger = require('./utils/csv-merger');
+const TextSplitterUI = require('./modules/text-splitter-ui');
 
 class MainApplication {
     constructor() {
@@ -73,6 +74,10 @@ class MainApplication {
                         
                     case 'csv_merge':
                         await this.handleCsvMerge();
+                        break;
+                        
+                    case 'text_splitter':
+                        await this.handleTextSplitter();
                         break;
                         
                     case 'config':
@@ -217,6 +222,18 @@ class MainApplication {
             
         } catch (error) {
             this.ui.showError(`CSV合并失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 处理文本分割工具
+     */
+    async handleTextSplitter() {
+        try {
+            const textSplitterUI = new TextSplitterUI();
+            await textSplitterUI.run();
+        } catch (error) {
+            this.ui.showError(`文本分割工具执行失败: ${error.message}`);
         }
     }
 

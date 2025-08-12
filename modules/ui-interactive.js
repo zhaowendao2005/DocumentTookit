@@ -69,6 +69,11 @@ class InteractiveUI {
                 description: '合并多个CSV文件为一个文件'
             },
             {
+                name: '✂️  文本分割工具',
+                value: 'text_splitter',
+                description: '使用正则表达式进行多级文本分割'
+            },
+            {
                 name: '⚙️  配置管理',
                 value: 'config',
                 description: '管理LLM提供商和系统配置'
