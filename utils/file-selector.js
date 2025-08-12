@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const inquirer = require('inquirer');
 const chalk = require('chalk');
+const checkboxPlus = require('./checkbox-plus-prompt');
 
 /**
  * 自定义文件/目录选择器
@@ -65,38 +66,59 @@ class FileSelector {
     }
 
     /**
-     * 多选模式
+     * 多选模式 - 使用增强的空格键选择
      */
     async _selectMultiple(type, message, extensions) {
-        const selected = [];
-        
         while (true) {
-            const choices = await this._buildChoices(type, extensions, true);
+            const choices = await this._buildChoicesForMultiSelect(type, extensions);
             
-            console.log(chalk.yellow(`\n已选择 ${selected.length} 个项目:`));
-            selected.forEach((item, index) => {
-                console.log(chalk.gray(`  ${index + 1}. ${path.basename(item)}`));
-            });
+            if (choices.length === 0) {
+                console.log(chalk.yellow('当前目录没有可选择的项目'));
+                return null;
+            }
 
-            const answer = await inquirer.prompt([{
-                type: 'list',
-                name: 'selection',
+            const selections = await checkboxPlus({
                 message: `${message} (当前: ${chalk.cyan(this.currentPath)})`,
                 choices: choices,
                 pageSize: 15
-            }]);
+            });
 
-            if (answer.selection === '__DONE__') {
-                return selected.length > 0 ? selected : null;
+            // 处理选择结果
+            const selectedFiles = [];
+            const navigationActions = [];
+
+            for (const selection of selections) {
+                if (selection.startsWith('__')) {
+                    navigationActions.push(selection);
+                } else {
+                    // 检查是否为目录
+                    try {
+                        const stat = fs.statSync(selection);
+                        if (stat.isDirectory()) {
+                            // 获取目录中的所有文件
+                            const files = this._getAllFilesInDirectory(selection, extensions);
+                            selectedFiles.push(...files);
+                        } else {
+                            selectedFiles.push(selection);
+                        }
+                    } catch (error) {
+                        // 忽略无效路径
+                    }
+                }
             }
 
-            const result = await this._handleSelection(answer.selection, type, extensions, true);
-            if (result && result !== 'continue') {
-                if (Array.isArray(result)) {
-                    selected.push(...result);
-                } else {
-                    selected.push(result);
+            // 处理导航操作
+            if (navigationActions.length > 0) {
+                const navAction = navigationActions[0]; // 只处理第一个导航操作
+                const handled = await this._handleNavigation(navAction);
+                if (!handled) {
+                    continue; // 继续选择
                 }
+            }
+
+            // 如果有选择的文件，显示结果并确认
+            if (selectedFiles.length > 0) {
+                return await this._confirmMultipleSelection(selectedFiles);
             }
         }
     }
@@ -278,6 +300,166 @@ class FileSelector {
         };
         
         return iconMap[ext.toLowerCase()] || '📄';
+    }
+
+    /**
+     * 为多选模式构建选择列表
+     */
+    async _buildChoicesForMultiSelect(type, extensions) {
+        const choices = [];
+        
+        // 添加导航选项
+        if (this.currentPath !== path.parse(this.currentPath).root) {
+            choices.push({
+                name: chalk.blue('📁 .. (上级目录)'),
+                value: '__UP__',
+                short: '上级目录'
+            });
+        }
+
+        if (this.history.length > 0) {
+            choices.push({
+                name: chalk.blue('⬅️  返回上一步'),
+                value: '__BACK__',
+                short: '返回'
+            });
+        }
+
+        choices.push({ type: 'separator' });
+
+        try {
+            const items = fs.readdirSync(this.currentPath);
+            
+            for (const item of items) {
+                const fullPath = path.join(this.currentPath, item);
+                
+                try {
+                    const stat = fs.statSync(fullPath);
+                    
+                    if (stat.isDirectory()) {
+                        if (type === 'directory' || type === 'both') {
+                            choices.push({
+                                name: `📁 ${item}`,
+                                value: fullPath,
+                                short: item,
+                                isDirectory: true
+                            });
+                        }
+                    } else if (stat.isFile() && (type === 'file' || type === 'both')) {
+                        // 检查文件扩展名
+                        if (extensions.length === 0 || extensions.includes(path.extname(item).toLowerCase())) {
+                            const icon = this._getFileIcon(path.extname(item));
+                            choices.push({
+                                name: `${icon} ${item}`,
+                                value: fullPath,
+                                short: item,
+                                isDirectory: false
+                            });
+                        }
+                    }
+                } catch (error) {
+                    // 忽略无法访问的文件
+                    continue;
+                }
+            }
+        } catch (error) {
+            choices.push({
+                name: chalk.red('❌ 无法读取当前目录'),
+                value: '__ERROR__',
+                short: '错误'
+            });
+        }
+
+        return choices;
+    }
+
+    /**
+     * 处理导航操作
+     */
+    async _handleNavigation(action) {
+        switch (action) {
+            case '__UP__':
+                this.history.push(this.currentPath);
+                this.currentPath = path.dirname(this.currentPath);
+                return false; // 继续选择
+                
+            case '__BACK__':
+                if (this.history.length > 0) {
+                    this.currentPath = this.history.pop();
+                }
+                return false; // 继续选择
+                
+            case '__ERROR__':
+                console.log(chalk.red('❌ 当前目录无法访问'));
+                return false; // 继续选择
+                
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * 递归获取目录中的所有文件
+     */
+    _getAllFilesInDirectory(dirPath, extensions = []) {
+        const files = [];
+        
+        const scanDir = (dir) => {
+            try {
+                const items = fs.readdirSync(dir);
+                
+                for (const item of items) {
+                    const fullPath = path.join(dir, item);
+                    const stat = fs.statSync(fullPath);
+                    
+                    if (stat.isDirectory()) {
+                        scanDir(fullPath);
+                    } else if (stat.isFile()) {
+                        const ext = path.extname(item).toLowerCase();
+                        if (extensions.length === 0 || extensions.includes(ext)) {
+                            files.push(fullPath);
+                        }
+                    }
+                }
+            } catch (error) {
+                // 忽略无法访问的目录
+            }
+        };
+        
+        scanDir(dirPath);
+        return files;
+    }
+
+    /**
+     * 确认多选结果
+     */
+    async _confirmMultipleSelection(selectedFiles) {
+        // 去重
+        const uniqueFiles = [...new Set(selectedFiles)];
+        
+        console.log(chalk.cyan(`\n🎯 已选择 ${uniqueFiles.length} 个文件:`));
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        uniqueFiles.forEach((file, index) => {
+            const relativePath = path.relative(process.cwd(), file);
+            const icon = this._getFileIcon(path.extname(file));
+            console.log(chalk.green(`  ${index + 1}. ${icon} ${relativePath}`));
+        });
+        
+        console.log(chalk.gray('─'.repeat(50)));
+        
+        const confirm = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'confirm',
+            message: chalk.yellow('确认选择这些文件？'),
+            default: true
+        }]);
+
+        if (confirm.confirm) {
+            return uniqueFiles;
+        } else {
+            return null; // 重新选择
+        }
     }
 
     /**
