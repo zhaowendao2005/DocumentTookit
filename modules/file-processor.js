@@ -1,9 +1,11 @@
 const path = require('path');
 const fs = require('fs');
+const chalk = require('chalk');
 const FileUtils = require('../utils/file-utils');
 const SimilarityCalculator = require('../utils/similarity');
 const TokenCounter = require('../utils/token-counter');
 const LLMClient = require('./llm-client');
+const CsvMerger = require('../utils/csv-merger');
 
 /**
  * 批量文件处理器：读取 -> 请求LLM -> 校验 -> 输出
@@ -20,6 +22,7 @@ class FileProcessor {
     this.client = new LLMClient({ providers: config.providers, retry: config.retry });
     this.sim = new SimilarityCalculator();
     this.tokenCounter = new TokenCounter();
+    this.csvMerger = new CsvMerger(logger);
 
     // 初始化 token 日志
     if (config.token_tracking?.save_token_logs && config.token_tracking?.log_file) {
@@ -147,6 +150,11 @@ class FileProcessor {
         failed++;
         this.logger.error(`汇总失败: ${rel} - ${e.message}`);
       }
+    }
+
+    // 询问是否合并CSV文件
+    if (succeeded > 0) {
+      await this.csvMerger.mergeCsvFilesInteractive(runOutputDir, runOutputDir);
     }
 
     return { total: files.length, succeeded, failed };
@@ -360,6 +368,8 @@ class FileProcessor {
     FileUtils.writeFile(outPath, csv, 'utf8');
     this.logger.info(`写出CSV: ${outPath}`);
   }
+
+
 }
 
 module.exports = FileProcessor;

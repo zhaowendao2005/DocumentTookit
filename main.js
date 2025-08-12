@@ -6,6 +6,7 @@ const InteractiveUI = require('./modules/ui-interactive');
 const DocxToMdConverter = require('./tools/docx_to_md_converter');
 const FileProcessor = require('./modules/file-processor');
 const ModelTester = require('./modules/model-tester');
+const CsvMerger = require('./utils/csv-merger');
 
 class MainApplication {
     constructor() {
@@ -68,6 +69,10 @@ class MainApplication {
                         
                     case 'model_test':
                         await this.handleModelTest();
+                        break;
+                        
+                    case 'csv_merge':
+                        await this.handleCsvMerge();
                         break;
                         
                     case 'config':
@@ -185,6 +190,33 @@ class MainApplication {
             
         } catch (error) {
             this.ui.showError(`模型测试失败: ${error.message}`);
+        }
+    }
+
+    async handleCsvMerge() {
+        try {
+            const mergeConfig = await this.ui.configureCsvMerge(this.config);
+            
+            if (!mergeConfig) {
+                this.ui.showWarning('用户取消操作');
+                return;
+            }
+
+            // 执行CSV合并
+            const merger = new CsvMerger();
+            const success = await merger.mergeCsvFilesInteractive(
+                mergeConfig.inputDir, 
+                mergeConfig.outputDir
+            );
+            
+            if (success) {
+                this.ui.showSuccess('CSV合并完成');
+            } else {
+                this.ui.showWarning('CSV合并未完成或失败');
+            }
+            
+        } catch (error) {
+            this.ui.showError(`CSV合并失败: ${error.message}`);
         }
     }
 

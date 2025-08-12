@@ -56,6 +56,11 @@ class InteractiveUI {
                 description: '测试LLM模型的可用性和响应质量'
             },
             {
+                name: '📊 CSV合并工具',
+                value: 'csv_merge',
+                description: '合并多个CSV文件为一个文件'
+            },
+            {
                 name: '⚙️  配置管理',
                 value: 'config',
                 description: '管理LLM提供商和系统配置'
@@ -465,6 +470,55 @@ class InteractiveUI {
             name: 'continue',
             message: chalk.cyan('按回车键继续...')
         }]);
+    }
+
+    /**
+     * 配置CSV合并
+     */
+    async configureCsvMerge(config) {
+        console.log(chalk.cyan('\n📊 配置CSV合并工具...\n'));
+
+        const answer = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'inputDir',
+                message: chalk.cyan('请输入包含CSV文件的目录:'),
+                default: config.directories.output_dir,
+                validate: (input) => {
+                    if (!fs.existsSync(input)) {
+                        return chalk.red('目录不存在，请重新输入');
+                    }
+                    return true;
+                }
+            },
+            {
+                type: 'input',
+                name: 'outputDir',
+                message: chalk.cyan('请输入合并后CSV文件的输出目录:'),
+                default: config.directories.output_dir,
+                validate: (input) => {
+                    if (!input || input.trim() === '') {
+                        return chalk.red('请输入输出目录路径');
+                    }
+                    return true;
+                }
+            },
+            {
+                type: 'confirm',
+                name: 'confirm',
+                message: chalk.yellow('确认开始合并？'),
+                default: true
+            }
+        ]);
+
+        if (!answer.confirm) {
+            return null;
+        }
+
+        return {
+            inputDir: answer.inputDir,
+            outputDir: answer.outputDir
+        };
     }
 
     /**
