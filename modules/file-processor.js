@@ -9,6 +9,7 @@ const LLMClient = require('./llm-client');
 const CsvMerger = require('../utils/csv-merger');
 const CsvValidator = require('../utils/csv-validator');
 const SemanticValidator = require('./semantic-validator');
+const { ErrorClassifier, ErrorReporter } = require('../utils/errors');
 
 /**
  * 批量文件处理器：读取 -> 请求LLM -> 校验 -> 输出
@@ -44,7 +45,7 @@ class FileProcessor {
    * @param {string} inputDir
    * @param {string} outputDir
    */
-  async runBatch(modelSel, input, outputDir) {
+  async runBatch(modelSel, input, outputDir, options = {}) {
     // 保存最近一次交互配置的超时参数，供请求传递
     this.lastTimeouts = modelSel.timeouts || null;
     // 保存校验配置
@@ -56,11 +57,19 @@ class FileProcessor {
       this.logger.info(`已应用交互式相似度阈值: ${uiSimTh}`);
     }
     // 为本次运行创建时间戳输出子目录（东八区本地时间）
-    const runId = this.formatLocalTimestamp('Asia/Shanghai');
-    const runOutputDir = path.join(outputDir, runId);
+    const runId = options.reuseRunOutputDir && options.fixedRunId
+      ? options.fixedRunId
+      : this.formatLocalTimestamp('Asia/Shanghai');
+    const runOutputDir = options.reuseRunOutputDir && options.fixedRunOutputDir
+      ? options.fixedRunOutputDir
+      : path.join(outputDir, runId);
     const tempDir = this.config.directories.temp_dir || path.join(path.dirname(outputDir), 'temp');
     this.ensureDir(runOutputDir);
     this.ensureDir(tempDir);
+
+    // 错误分类与归档
+    const classifier = new ErrorClassifier();
+    const reporter = new ErrorReporter(runOutputDir, { copyInput: (this.config.errors?.export_input_copy !== false) });
 
     // 支持数组或单一路径
     const inputs = Array.isArray(input) ? input : [input];
@@ -185,7 +194,23 @@ class FileProcessor {
       } catch (e) {
         failed++;
         this.logger.error(`汇总失败: ${rel} - ${e.message}`);
-        fileSummaries.push({ filename: rel, mode: 'classic', succeeded: false, fallback: false, error: e.message });
+        const errorInfo = classifier.classify(e, { stage: 'validation' });
+        const fileAbs = meta.file?.path || '';
+        // 记录错误并按原因入库
+        reporter.addRecord({
+          filename: rel,
+          inputPath: fileAbs,
+          stage: 'validation',
+          type: errorInfo.type,
+          message: errorInfo.message,
+          status: errorInfo.status,
+          code: errorInfo.code,
+          mode: 'classic',
+          provider: modelSel?.provider,
+          model: modelSel?.model,
+          attemptsUsed: meta.errors || 0,
+        });
+        fileSummaries.push({ filename: rel, mode: 'classic', succeeded: false, fallback: false, error: e.message, errorType: errorInfo.type });
       }
     }
 
@@ -195,7 +220,9 @@ class FileProcessor {
     }
 
     const tokenStats = this.tokenCounter.getTokenStats();
-    return { total: files.length, succeeded, failed, runId, runOutputDir, files: fileSummaries, tokenStats };
+    const manifest = reporter.finalize();
+    const errorStats = manifest ? manifest.byType : {};
+    return { total: files.length, succeeded, failed, runId, runOutputDir, files: fileSummaries, tokenStats, errorStats };
   }
 
   /**

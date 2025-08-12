@@ -134,11 +134,20 @@ class InteractiveUI {
       default: (config.processing?.default_mode || 'classic')
     }]);
 
-        // 2. 选择输入（支持目录树选择与多选）
-        const inputs = await this.selectInputs(config.directories.input_dir);
-        
-        // 3. 选择输出目录
-        const outputDir = await this.selectPath('输出目录', config.directories.output_dir);
+        // 2. 选择输入（支持目录树选择与多选，含“错误重处理批次”）
+        const inputSel = await this.selectInputs(config.directories.input_dir);
+        let inputs = Array.isArray(inputSel) ? inputSel : (inputSel.inputs || []);
+        let isReprocess = !Array.isArray(inputSel) && inputSel && inputSel.mode === 'reprocess';
+        let reprocessInfo = isReprocess ? (inputSel.reprocess || null) : null;
+
+        // 3. 选择输出目录（重处理模式跳过，由主流程回写原 runId 目录）
+        let outputDir;
+        if (!isReprocess) {
+          outputDir = await this.selectPath('输出目录', config.directories.output_dir);
+        } else {
+          outputDir = config.directories.output_dir; // 占位，不实际使用
+          console.log(chalk.yellow(`本次为错误重处理，将回写原运行目录：${reprocessInfo?.runId || '(未知运行ID)'}`));
+        }
         
         // 4. 显示文件数量
         const fileCount = await this.countFilesInTargets(inputs);
@@ -190,20 +199,146 @@ class InteractiveUI {
       llmSummaryModel = modelSel;
     }
 
+    // 9. 错误重处理模式在“选择输入源”中完成，无需二次确认
+
         return {
             model: modelSelection,
             inputs: inputs,
             outputDir: outputDir,
             fileCount: fileCount,
             validation: validationConfig,
-      timeouts: timeoutConfig,
-      mode: modeAnswer.mode,
-        structured: structured,
-        llmSummary: {
-          enabled: wantLLMSummary.enableLLMSummary,
-          model: llmSummaryModel
-        }
+            timeouts: timeoutConfig,
+            mode: modeAnswer.mode,
+            structured: structured,
+            llmSummary: {
+              enabled: wantLLMSummary.enableLLMSummary,
+              model: llmSummaryModel
+            },
+            reprocess: reprocessInfo
         };
+    }
+
+    /**
+     * 扫描输出根目录，按时间戳倒序列出包含 error 的运行目录
+     * @param {string} outputRoot
+     * @returns {Array<{ runId:string, errorDir:string, summary?:object, manifest?:object, errorStats?:object, failed?:number, total?:number }>}
+     */
+    listErrorReprocessCandidates(outputRoot) {
+      try {
+        if (!fs.existsSync(outputRoot)) return [];
+        const entries = fs.readdirSync(outputRoot, { withFileTypes: true });
+        const tsRegex = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/;
+        const candidates = [];
+        for (const ent of entries) {
+          if (!ent.isDirectory()) continue;
+          const name = ent.name;
+          if (!tsRegex.test(name)) continue;
+          const runDir = path.join(outputRoot, name);
+          const errDir = path.join(runDir, 'error');
+          if (!fs.existsSync(errDir)) continue;
+
+          let summary = null;
+          let manifest = null;
+          let errorStats = null;
+          let total = undefined;
+          let failed = undefined;
+
+          const summaryPath = path.join(runDir, 'run_summary.json');
+          if (fs.existsSync(summaryPath)) {
+            try {
+              summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+              const t = summary.totals || summary.totals || null;
+              if (t) {
+                total = t.total;
+                failed = t.failed;
+              }
+              errorStats = summary.errorStats || null;
+            } catch (_) {}
+          }
+
+          const manifestPath = path.join(errDir, 'error_manifest.json');
+          if (fs.existsSync(manifestPath)) {
+            try {
+              manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+              errorStats = errorStats || manifest.byType || null;
+              failed = failed ?? manifest.total;
+            } catch (_) {}
+          }
+
+          // 回退：粗略统计 error 目录内文件数量
+          if (failed == null || errorStats == null) {
+            try {
+              const types = fs.readdirSync(errDir, { withFileTypes: true }).filter(d => d.isDirectory());
+              const counts = {};
+              let fsum = 0;
+              for (const d of types) {
+                const typeDir = path.join(errDir, d.name);
+                const files = this._countFilesRecursive(typeDir, (p) => !p.endsWith('error.json'));
+                counts[d.name] = files;
+                fsum += files;
+              }
+              errorStats = errorStats || counts;
+              failed = failed ?? fsum;
+            } catch (_) {}
+          }
+
+          // 空 error 目录跳过
+          if (!failed || failed <= 0) continue;
+
+          candidates.push({ runId: name, errorDir: errDir, summary, manifest, errorStats, total, failed });
+        }
+        // 倒序（最新在前）
+        candidates.sort((a, b) => (a.runId < b.runId ? 1 : -1));
+        return candidates;
+      } catch (_) {
+        return [];
+      }
+    }
+
+    _countFilesRecursive(dir, accept = () => true) {
+      let count = 0;
+      try {
+        const items = fs.readdirSync(dir, { withFileTypes: true });
+        for (const it of items) {
+          const p = path.join(dir, it.name);
+          if (it.isDirectory()) count += this._countFilesRecursive(p, accept);
+          else if (accept(p)) count += 1;
+        }
+      } catch (_) {}
+      return count;
+    }
+
+    /**
+     * 让用户选择一个错误重处理候选项（最新优先），或手动选择
+     * @param {string} outputRoot
+     * @returns {Promise<{ type:'candidate'|'manual'|'back', runId?:string, errorDir?:string }|null>}
+     */
+    async selectErrorReprocessCandidate(outputRoot) {
+      const cands = this.listErrorReprocessCandidates(outputRoot);
+      const choices = [];
+      for (const c of cands) {
+        const stats = c.errorStats || {};
+        const statStr = Object.keys(stats).map(k => `${k}:${stats[k]}`).join(' ');
+        const totalStr = (c.total != null) ? ` 总数:${c.total}` : '';
+        choices.push({
+          name: `${c.runId}  失败:${c.failed}${totalStr}  [${statStr}]`,
+          value: { type: 'candidate', runId: c.runId, errorDir: c.errorDir },
+          short: c.runId,
+        });
+      }
+      choices.push(new inquirer.Separator());
+      choices.push({ name: '手动选择错误目录…', value: { type: 'manual' } });
+      choices.push({ name: '返回', value: { type: 'back' } });
+
+      const ans = await inquirer.prompt([{
+        type: 'list',
+        name: 'sel',
+        message: chalk.cyan('选择一个错误重处理批次（按时间倒序）：'),
+        choices,
+        pageSize: Math.min(12, Math.max(6, choices.length)),
+        default: choices.length > 2 ? choices[0].value : undefined,
+      }]);
+      return ans.sel || null;
     }
 
     /**
@@ -988,6 +1123,11 @@ class InteractiveUI {
                     name: '📄 传统文件模式 - 手动选择多个文件',
                     value: 'files',
                     short: '多文件'
+                },
+                {
+                    name: '🛠 错误重处理批次（按时间倒序）',
+                    value: 'reprocess',
+                    short: '错误重处理'
                 }
             ],
             default: 'enhanced'
@@ -1026,6 +1166,20 @@ class InteractiveUI {
                     { selectFiles: true, multiple: true }
                 );
                 return Array.isArray(files) ? files : [files];
+            
+            case 'reprocess':
+                // 错误重处理候选列表
+                const sel = await this.selectErrorReprocessCandidate(this.config?.directories?.output_dir || './data/output');
+                if (!sel || sel.type === 'back') return [];
+                if (sel.type === 'manual') {
+                    const errDir = await this.selectPath('选择错误目录（某次运行的 error 子目录）', this.config?.directories?.output_dir || './data/output');
+                    return { mode: 'reprocess', inputs: [errDir], reprocess: { enable: true, errorDir: errDir } };
+                }
+                if (sel.type === 'candidate') {
+                    // 直接使用 errorDir 作为输入源目录
+                    return { mode: 'reprocess', inputs: [sel.errorDir], reprocess: { enable: true, errorDir: sel.errorDir, runId: sel.runId } };
+                }
+                return [];
                 
             default:
                 return [];

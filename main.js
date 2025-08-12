@@ -130,11 +130,41 @@ class MainApplication {
             // 确保目录存在
             ConfigLoader.ensureDirectories(this.config);
 
-            // 执行批量处理
+            // 执行批量处理 / 或错误重处理
             const processor = new FileProcessor({ config: this.config, logger: console });
             this.ui.showInfo('开始批量处理...');
             let result;
             const mode = setup.mode || (this.config.processing?.default_mode || 'classic');
+            // 错误重处理模式：复用原 run 输出目录
+            const reprocess = setup.reprocess && setup.reprocess.enable;
+            let extraOptions = {};
+            if (reprocess && setup.reprocess.errorDir) {
+                const path = require('path');
+                const fs = require('fs');
+                const errorDir = setup.reprocess.errorDir;
+                const runOutputDir = path.dirname(errorDir); // .../<runId>
+                const fixedRunId = path.basename(runOutputDir);
+                extraOptions = { reuseRunOutputDir: true, fixedRunOutputDir: runOutputDir, fixedRunId };
+                // 将 inputs 切换为错误目录下的文件集合（过滤 error.json）
+                const collectFiles = (dir) => {
+                    const list = [];
+                    const walk = (d) => {
+                        const items = fs.readdirSync(d);
+                        for (const it of items) {
+                            const p = path.join(d, it);
+                            const st = fs.statSync(p);
+                            if (st.isDirectory()) walk(p);
+                            else if (!p.endsWith('error.json')) list.push(p);
+                        }
+                    };
+                    walk(dir);
+                    return list;
+                };
+                const reInputs = collectFiles(errorDir);
+                setup.inputs = reInputs;
+                setup.outputDir = path.dirname(runOutputDir); // 传入父 output，以便处理器内部拼回 fixedRunOutputDir
+                this.ui.showInfo(`错误重处理：从 ${errorDir} 收集 ${reInputs.length} 个文件，结果将回写 ${runOutputDir}`);
+            }
             if (mode === 'structured') {
                 const StructuredFileProcessor = require('./modules/structured-file-processor');
                 const sproc = new StructuredFileProcessor({ config: this.config, logger: console });
@@ -143,7 +173,7 @@ class MainApplication {
                     { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
                     setup.inputs,
                     setup.outputDir,
-                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts }
+                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts, ...extraOptions }
                 );
 
                 // 生成运行总结报告（md + json）
@@ -199,7 +229,8 @@ class MainApplication {
                 result = await processor.runBatch(
                     { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
                     setup.inputs,
-                    setup.outputDir
+                    setup.outputDir,
+                    { ...extraOptions }
                 );
                 // 经典模式同样生成运行总结
                 try {

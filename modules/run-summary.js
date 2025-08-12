@@ -17,6 +17,7 @@ class RunSummary {
         failed: stats.failed,
         fallback: stats.fallback || 0,
       },
+      errorStats: stats.errorStats || {},
       files: stats.files || [],
       token: tokenStats || null,
       generatedAt: new Date().toISOString(),
@@ -40,6 +41,18 @@ class RunSummary {
     lines.push('## 总览');
     lines.push(`- 处理文件：总计 ${t.total}，成功 ${t.succeeded}，失败 ${t.failed}，回退经典 ${t.fallback}`);
     lines.push(`- 输出目录：${summary.outputDir}`);
+    if (t.failed > 0) {
+      lines.push(`- 错误目录：${summary.outputDir}/error`);
+      const es = summary.errorStats || {};
+      const keys = Object.keys(es);
+      if (keys.length) {
+        lines.push('');
+        lines.push('## 错误统计');
+        for (const k of keys) {
+          lines.push(`- ${k}: ${es[k]}`);
+        }
+      }
+    }
     if (summary.token) {
       lines.push('');
       lines.push('## Token 用量');

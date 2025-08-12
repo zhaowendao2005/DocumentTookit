@@ -8,6 +8,7 @@ const LLMClient = require('./llm-client');
 const TokenCounter = require('../utils/token-counter');
 const JsonSchemaValidator = require('./json-schema-validator');
 const JsonUtils = require('../utils/json-utils');
+const { ErrorClassifier, ErrorReporter } = require('../utils/errors');
 
 /**
  * 结构化文件处理器：LLM 输出 JSON(rows) → 本地校验/修复 → CSV → 进入现有校验/语义一致性
@@ -31,8 +32,12 @@ class StructuredFileProcessor {
    * 主入口：并发处理目录/文件（与经典处理器返回结构保持一致）
    */
   async runBatch(modelSel, input, outputDir, options = {}) {
-    const runId = this._formatLocalTimestamp('Asia/Shanghai');
-    const runOutputDir = path.join(outputDir, runId);
+    const runId = options.reuseRunOutputDir && options.fixedRunId
+      ? options.fixedRunId
+      : this._formatLocalTimestamp('Asia/Shanghai');
+    const runOutputDir = options.reuseRunOutputDir && options.fixedRunOutputDir
+      ? options.fixedRunOutputDir
+      : path.join(outputDir, runId);
     const tempRoot = this.config.directories.temp_dir || path.join(path.dirname(outputDir), 'temp');
     this._ensureDir(runOutputDir);
     this._ensureDir(tempRoot);
@@ -64,6 +69,8 @@ class StructuredFileProcessor {
     let index = 0;
 
     const stats = { total: files.length, succeeded: 0, failed: 0, fallback: 0, files: [] };
+    const classifier = new ErrorClassifier();
+    const reporter = new ErrorReporter(runOutputDir, { copyInput: (this.config.errors?.export_input_copy !== false) });
 
     const worker = async () => {
       while (true) {
@@ -99,9 +106,37 @@ class StructuredFileProcessor {
             } catch (ee) {
               this.logger.error(`回退经典模式也失败: ${rel} - ${ee.message}`);
               stats.failed++;
+              // 归档 fallback 失败
+              const info = classifier.classify(ee, { stage: 'fallback' });
+              reporter.addRecord({
+                filename: rel,
+                inputPath: file.path,
+                stage: 'fallback',
+                type: info.type,
+                message: info.message,
+                status: info.status,
+                code: info.code,
+                mode: 'structured',
+                provider: modelSel?.provider,
+                model: modelSel?.model,
+              });
             }
           } else {
             stats.failed++;
+            // 归档结构化失败（一般为 parse/validation）
+            const info = classifier.classify(e, { stage: 'validation' });
+            reporter.addRecord({
+              filename: rel,
+              inputPath: file.path,
+              stage: 'validation',
+              type: info.type,
+              message: info.message,
+              status: info.status,
+              code: info.code,
+              mode: 'structured',
+              provider: modelSel?.provider,
+              model: modelSel?.model,
+            });
           }
         }
         stats.files.push(record);
@@ -112,7 +147,9 @@ class StructuredFileProcessor {
     await Promise.all(workers);
 
     const tokenStats = this.tokenCounter.getTokenStats();
-    return { total: stats.total, succeeded: stats.succeeded, failed: stats.failed, fallback: stats.fallback, files: stats.files, runId, runOutputDir, tokenStats };
+    const manifest = reporter.finalize();
+    const errorStats = manifest ? manifest.byType : {};
+    return { total: stats.total, succeeded: stats.succeeded, failed: stats.failed, fallback: stats.fallback, files: stats.files, runId, runOutputDir, tokenStats, errorStats };
   }
 
   async _processOneFile({ modelSel, content, filename, tempDir, promptVersion, maxRepairAttempts }) {
