@@ -6,18 +6,13 @@ const ora = require('ora');
 const boxen = require('boxen');
 const gradient = require('gradient-string');
 
+// 注册文件树选择插件
+inquirer.registerPrompt('file-tree-selection', require('inquirer-file-tree-selection-prompt'));
+
 class InteractiveUI {
     constructor(config = {}) {
         this.spinner = null;
         this.config = config;
-        // 尝试注册文件树选择插件（空格选择，回车进入目录）
-        try {
-            const treePrompt = require('inquirer-file-tree-selection-prompt');
-            inquirer.registerPrompt('file-tree-selection', treePrompt);
-            this.hasFileTreePrompt = true;
-        } catch (e) {
-            this.hasFileTreePrompt = false;
-        }
     }
 
     /**
@@ -114,7 +109,7 @@ class InteractiveUI {
         const inputs = await this.selectInputs(config.directories.input_dir);
         
         // 3. 选择输出目录
-        const outputDir = await this.selectDirectory('输出目录', config.directories.output_dir);
+        const outputDir = await this.selectPath('输出目录', config.directories.output_dir);
         
         // 4. 显示文件数量
         const fileCount = await this.countFilesInTargets(inputs);
@@ -164,23 +159,161 @@ class InteractiveUI {
     }
 
     /**
-     * 选择目录
+     * 统一路径选择方法：首选图形文件选择器，支持手动输入备选
+     * @param {string} title - 选择提示标题
+     * @param {string} defaultPath - 默认路径
+     * @param {Object} options - 选择选项
+     * @param {boolean} options.selectFiles - 是否选择文件（默认选择目录）
+     * @param {boolean} options.multiple - 是否支持多选（仅对文件有效）
+     * @returns {Promise<string|string[]>} 选择的路径
      */
-    async selectDirectory(title, defaultPath) {
-        const answer = await inquirer.prompt([{
-            type: 'input',
-            name: 'directory',
-            message: chalk.cyan(`${title}:`),
-            default: defaultPath,
-            validate: (input) => {
-                if (!fs.existsSync(input)) {
-                    return chalk.red('目录不存在，请重新输入');
+    async selectPath(title, defaultPath = './', options = {}) {
+        const {
+            selectFiles = false,
+            multiple = false
+        } = options;
+
+        console.log(chalk.cyan(`\n📁 ${title}`));
+        
+        const methodChoice = await inquirer.prompt([{
+            type: 'list',
+            name: 'method',
+            message: chalk.cyan('请选择路径输入方式:'),
+            choices: [
+                {
+                    name: '🖱️  图形界面选择（推荐）',
+                    value: 'gui',
+                    short: '图形界面'
+                },
+                {
+                    name: '⌨️  手动输入路径',
+                    value: 'manual',
+                    short: '手动输入'
                 }
-                return true;
-            }
+            ],
+            default: 'gui'
         }]);
 
-        return answer.directory;
+        if (methodChoice.method === 'gui') {
+            try {
+                return await this.selectPathGui(title, defaultPath, { selectFiles, multiple });
+            } catch (error) {
+                console.log(chalk.yellow('⚠️  图形选择失败，自动切换到手动输入模式'));
+                return await this.selectPathManual(title, defaultPath, { selectFiles, multiple });
+            }
+        } else {
+            return await this.selectPathManual(title, defaultPath, { selectFiles, multiple });
+        }
+    }
+
+    /**
+     * 图形界面路径选择
+     */
+    async selectPathGui(title, defaultPath, options = {}) {
+        const { selectFiles = false, multiple = false } = options;
+        
+        const startPath = fs.existsSync(defaultPath) ? defaultPath : process.cwd();
+        
+        if (selectFiles) {
+            // 选择文件
+            const answer = await inquirer.prompt([{
+                type: 'file-tree-selection',
+                name: 'selection',
+                message: chalk.cyan(`选择${multiple ? '文件（可多选）' : '文件'}:`),
+                root: startPath,
+                multiple: multiple,
+                onlyShowValid: true,
+                validate: (item) => {
+                    return item.isFile();
+                }
+            }]);
+            
+            return multiple ? answer.selection : answer.selection[0];
+        } else {
+            // 选择目录
+            const answer = await inquirer.prompt([{
+                type: 'file-tree-selection',
+                name: 'directory',
+                message: chalk.cyan('选择目录:'),
+                root: startPath,
+                onlyShowValid: true,
+                validate: (item) => {
+                    return item.isDirectory();
+                }
+            }]);
+            
+            return answer.directory;
+        }
+    }
+
+    /**
+     * 手动输入路径
+     */
+    async selectPathManual(title, defaultPath, options = {}) {
+        const { selectFiles = false, multiple = false } = options;
+        
+        if (multiple) {
+            // 多路径输入（用逗号分隔）
+            const answer = await inquirer.prompt([{
+                type: 'input',
+                name: 'paths',
+                message: chalk.cyan(`${title}（多个路径用逗号分隔）:`),
+                default: defaultPath,
+                validate: (input) => {
+                    if (!input || input.trim() === '') {
+                        return chalk.red('请输入至少一个路径');
+                    }
+                    
+                    const paths = input.split(',').map(p => p.trim()).filter(p => p);
+                    for (const p of paths) {
+                        if (!fs.existsSync(p)) {
+                            return chalk.red(`路径不存在: ${p}`);
+                        }
+                        if (selectFiles && !fs.statSync(p).isFile()) {
+                            return chalk.red(`不是文件: ${p}`);
+                        }
+                        if (!selectFiles && !fs.statSync(p).isDirectory()) {
+                            return chalk.red(`不是目录: ${p}`);
+                        }
+                    }
+                    return true;
+                }
+            }]);
+            
+            return answer.paths.split(',').map(p => p.trim()).filter(p => p);
+        } else {
+            // 单路径输入
+            const answer = await inquirer.prompt([{
+                type: 'input',
+                name: 'path',
+                message: chalk.cyan(`${title}:`),
+                default: defaultPath,
+                validate: (input) => {
+                    if (!input || input.trim() === '') {
+                        return chalk.red('请输入路径');
+                    }
+                    if (!fs.existsSync(input)) {
+                        return chalk.red('路径不存在，请重新输入');
+                    }
+                    if (selectFiles && !fs.statSync(input).isFile()) {
+                        return chalk.red('请输入文件路径');
+                    }
+                    if (!selectFiles && !fs.statSync(input).isDirectory()) {
+                        return chalk.red('请输入目录路径');
+                    }
+                    return true;
+                }
+            }]);
+            
+            return answer.path;
+        }
+    }
+
+    /**
+     * 选择目录（兼容旧接口）
+     */
+    async selectDirectory(title, defaultPath) {
+        return await this.selectPath(title, defaultPath, { selectFiles: false });
     }
 
     /**
@@ -235,46 +368,33 @@ class InteractiveUI {
     async configureDocxToMd() {
         console.log(chalk.cyan('\n📄 配置Docx转Markdown转换...\n'));
 
-        const answer = await inquirer.prompt([
-            {
-                type: 'input',
-                name: 'inputDir',
-                message: chalk.cyan('请输入包含docx文件的输入目录:'),
-                default: this.config.docx_converter?.default_input_dir || './data/input',
-                validate: (input) => {
-                    if (!fs.existsSync(input)) {
-                        return chalk.red('目录不存在，请重新输入');
-                    }
-                    return true;
-                }
-            },
-            {
-                type: 'input',
-                name: 'outputDir',
-                message: chalk.cyan('请输入md文件的输出目录:'),
-                default: this.config.docx_converter?.default_output_dir || './data/output',
-                validate: (input) => {
-                    if (!input || input.trim() === '') {
-                        return chalk.red('请输入输出目录路径');
-                    }
-                    return true;
-                }
-            },
-            {
-                type: 'confirm',
-                name: 'confirm',
-                message: chalk.yellow('确认开始转换？'),
-                default: true
-            }
-        ]);
+        // 选择输入目录
+        const inputDir = await this.selectPath(
+            '包含docx文件的输入目录', 
+            this.config.docx_converter?.default_input_dir || './data/input'
+        );
+        
+        // 选择输出目录
+        const outputDir = await this.selectPath(
+            'md文件的输出目录', 
+            this.config.docx_converter?.default_output_dir || './data/output'
+        );
 
-        if (!answer.confirm) {
+        // 确认转换
+        const confirm = await inquirer.prompt([{
+            type: 'confirm',
+            name: 'confirm',
+            message: chalk.yellow('确认开始转换？'),
+            default: true
+        }]);
+
+        if (!confirm.confirm) {
             return null;
         }
 
         return {
-            inputDir: answer.inputDir,
-            outputDir: answer.outputDir
+            inputDir: inputDir,
+            outputDir: outputDir
         };
     }
 
@@ -689,30 +809,45 @@ class InteractiveUI {
     }
 
     /**
-     * 使用文件树多选输入（空格选择，回车进入目录）。若插件不可用，回退为单目录输入。
+     * 选择输入目录或文件（支持多选）
      * @param {string} rootDir
      * @returns {Promise<string[]>} 选中的绝对路径列表
      */
     async selectInputs(rootDir) {
-        if (this.hasFileTreePrompt) {
-            const answer = await inquirer.prompt([
+        console.log(chalk.cyan('\n📂 选择输入源'));
+        
+        const sourceType = await inquirer.prompt([{
+            type: 'list',
+            name: 'type',
+            message: chalk.cyan('请选择输入类型:'),
+            choices: [
                 {
-                    type: 'file-tree-selection',
-                    name: 'paths',
-                    message: chalk.cyan('选择要处理的目录或文件: (空格选择，回车进入目录)'),
-                    root: rootDir,
-                    multiple: true,
-                    onlyShowValid: false
+                    name: '📁 目录（处理目录下所有支持的文件）',
+                    value: 'directory',
+                    short: '目录'
+                },
+                {
+                    name: '📄 文件（选择特定文件进行处理）',
+                    value: 'files',
+                    short: '文件'
                 }
-            ]);
-            const val = answer.paths;
-            if (!val) return [rootDir];
-            return Array.isArray(val) ? val : [val];
-        }
+            ],
+            default: 'directory'
+        }]);
 
-        // 回退：单目录输入
-        const dir = await this.selectDirectory('输入文件目录', rootDir);
-        return [dir];
+        if (sourceType.type === 'directory') {
+            // 选择目录
+            const dir = await this.selectPath('输入文件目录', rootDir);
+            return [dir];
+        } else {
+            // 选择多个文件
+            const files = await this.selectPath(
+                '选择要处理的文件', 
+                rootDir, 
+                { selectFiles: true, multiple: true }
+            );
+            return Array.isArray(files) ? files : [files];
+        }
     }
 
     /**
