@@ -6,10 +6,21 @@
  */
 
 const TextSplitterUI = require('../modules/text-splitter-ui');
+const ConfigLoader = require('../config/config-loader');
 
 async function main() {
     try {
-        const textSplitterUI = new TextSplitterUI();
+        // 尝试加载配置文件
+        let config = {};
+        try {
+            config = await ConfigLoader.load();
+            console.log('✅ 配置文件加载成功');
+        } catch (error) {
+            console.log('⚠️  配置文件加载失败，使用默认配置');
+            config = {};
+        }
+        
+        const textSplitterUI = new TextSplitterUI(config);
         await textSplitterUI.run();
     } catch (error) {
         console.error('❌ 文本分割工具执行失败:', error.message);

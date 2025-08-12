@@ -7,8 +7,9 @@ const boxen = require('boxen');
 const gradient = require('gradient-string');
 
 class InteractiveUI {
-    constructor() {
+    constructor(config = {}) {
         this.spinner = null;
+        this.config = config;
         // 尝试注册文件树选择插件（空格选择，回车进入目录）
         try {
             const treePrompt = require('inquirer-file-tree-selection-prompt');
@@ -239,7 +240,7 @@ class InteractiveUI {
                 type: 'input',
                 name: 'inputDir',
                 message: chalk.cyan('请输入包含docx文件的输入目录:'),
-                default: './input',
+                default: this.config.docx_converter?.default_input_dir || './data/input',
                 validate: (input) => {
                     if (!fs.existsSync(input)) {
                         return chalk.red('目录不存在，请重新输入');
@@ -251,7 +252,7 @@ class InteractiveUI {
                 type: 'input',
                 name: 'outputDir',
                 message: chalk.cyan('请输入md文件的输出目录:'),
-                default: './output',
+                default: this.config.docx_converter?.default_output_dir || './data/output',
                 validate: (input) => {
                     if (!input || input.trim() === '') {
                         return chalk.red('请输入输出目录路径');
@@ -496,7 +497,7 @@ class InteractiveUI {
                 type: 'input',
                 name: 'inputDir',
                 message: chalk.cyan('请输入包含CSV文件的目录:'),
-                default: config.directories.output_dir,
+                default: config.csv_merger?.default_input_dir || config.directories.output_dir,
                 validate: (input) => {
                     if (!fs.existsSync(input)) {
                         return chalk.red('目录不存在，请重新输入');
@@ -508,7 +509,7 @@ class InteractiveUI {
                 type: 'input',
                 name: 'outputDir',
                 message: chalk.cyan('请输入合并后CSV文件的输出目录:'),
-                default: config.directories.output_dir,
+                default: config.csv_merger?.default_output_dir || config.directories.output_dir,
                 validate: (input) => {
                     if (!input || input.trim() === '') {
                         return chalk.red('请输入输出目录路径');
@@ -598,7 +599,7 @@ class InteractiveUI {
                 type: 'input',
                 name: 'testPrompt',
                 message: chalk.cyan('测试提示词:'),
-                default: '请简单回复"测试成功"',
+                default: config.model_tester?.default_test_prompt || '请简单回复"测试成功"',
                 validate: (input) => {
                     if (!input || input.trim() === '') {
                         return chalk.red('请输入测试提示词');
@@ -610,7 +611,7 @@ class InteractiveUI {
                 type: 'number',
                 name: 'timeout',
                 message: chalk.cyan('响应超时时间(秒):'),
-                default: (config.network?.response_timeout_ms || 60000) / 1000,
+                default: config.model_tester?.default_response_timeout || (config.network?.response_timeout_ms || 60000) / 1000,
                 validate: (input) => {
                     if (input < 5 || input > 600) {
                         return chalk.red('响应超时必须在5-600秒之间');
@@ -622,7 +623,7 @@ class InteractiveUI {
                 type: 'number',
                 name: 'connectTimeout',
                 message: chalk.cyan('连接超时时间(毫秒):'),
-                default: config.network?.connect_timeout_ms || 3000,
+                default: config.model_tester?.default_connect_timeout || config.network?.connect_timeout_ms || 3000,
                 validate: (input) => {
                     if (input < 200 || input > 30000) {
                         return chalk.red('连接超时必须在200-30000毫秒之间');
@@ -659,7 +660,7 @@ class InteractiveUI {
                 type: 'number',
                 name: 'connectTimeoutMs',
                 message: chalk.cyan('连接超时时间(毫秒):'),
-                default: defaults.connect_timeout_ms || 3000,
+                default: defaults.connect_timeout_ms || this.config?.network?.connect_timeout_ms || 3000,
                 validate: (input) => {
                     if (input < 200 || input > 30000) {
                         return chalk.red('连接超时必须在200-30000毫秒之间');
@@ -671,7 +672,7 @@ class InteractiveUI {
                 type: 'number',
                 name: 'responseTimeoutMs',
                 message: chalk.cyan('响应超时时间(毫秒):'),
-                default: defaults.response_timeout_ms || 60000,
+                default: defaults.response_timeout_ms || this.config?.network?.response_timeout_ms || 60000,
                 validate: (input) => {
                     if (input < 5000 || input > 600000) {
                         return chalk.red('响应超时必须在5000-600000毫秒之间');

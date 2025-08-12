@@ -12,7 +12,7 @@ const TextSplitterUI = require('./modules/text-splitter-ui');
 class MainApplication {
     constructor() {
         this.config = null;
-        this.ui = new InteractiveUI();
+        this.ui = null;
     }
 
     /**
@@ -20,6 +20,9 @@ class MainApplication {
      */
     async start() {
         try {
+            // 先创建UI实例
+            this.ui = new InteractiveUI();
+            
             // 显示欢迎界面
             this.ui.showWelcome();
             
@@ -42,6 +45,8 @@ class MainApplication {
         try {
             this.ui.showProgress('正在加载配置...');
             this.config = await ConfigLoader.load();
+            // 更新UI实例的配置
+            this.ui.config = this.config;
             this.ui.stopProgress();
             this.ui.showSuccess('配置加载成功');
         } catch (error) {
@@ -230,7 +235,7 @@ class MainApplication {
      */
     async handleTextSplitter() {
         try {
-            const textSplitterUI = new TextSplitterUI();
+            const textSplitterUI = new TextSplitterUI(this.config);
             await textSplitterUI.run();
         } catch (error) {
             this.ui.showError(`文本分割工具执行失败: ${error.message}`);

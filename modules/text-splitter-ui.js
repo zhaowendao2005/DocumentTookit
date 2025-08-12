@@ -8,8 +8,9 @@ const TextSplitter = require('../utils/text-splitter');
  * 文本分割工具的交互式UI
  */
 class TextSplitterUI {
-    constructor() {
+    constructor(config = {}) {
         this.splitter = new TextSplitter();
+        this.config = config;
     }
 
     /**
@@ -80,7 +81,7 @@ class TextSplitterUI {
                 type: 'input',
                 name: 'filePath',
                 message: chalk.cyan('请输入源文件路径:'),
-                default: './input/source.txt',
+                default: this.config.text_splitter?.default_source_file || './data/input/source.txt',
                 validate: (input) => {
                     if (!fs.existsSync(input)) {
                         return chalk.red('文件不存在，请重新输入');
@@ -348,7 +349,7 @@ class TextSplitterUI {
                 type: 'input',
                 name: 'outputDir',
                 message: chalk.cyan('输出目录:'),
-                default: './output/split_results',
+                default: this.config.text_splitter?.default_output_dir || './data/output/split_results',
                 validate: (input) => {
                     if (!input.trim()) {
                         return chalk.red('输出目录不能为空');
@@ -364,19 +365,20 @@ class TextSplitterUI {
                     { name: '.txt', value: '.txt' },
                     { name: '.md', value: '.md' },
                     { name: '.yaml', value: '.yaml' }
-                ]
+                ],
+                default: this.config.text_splitter?.default_file_extension || '.txt'
             },
             {
                 type: 'confirm',
                 name: 'includeMetadata',
                 message: chalk.cyan('是否在文件中包含元数据信息？'),
-                default: true
+                default: this.config.text_splitter?.include_metadata ?? true
             },
             {
                 type: 'confirm',
                 name: 'flattenStructure',
                 message: chalk.cyan('是否使用扁平化结构（所有文件在同一目录）？'),
-                default: false
+                default: this.config.text_splitter?.flatten_structure ?? false
             },
             {
                 type: 'confirm',
