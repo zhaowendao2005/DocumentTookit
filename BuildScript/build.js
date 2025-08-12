@@ -112,7 +112,7 @@ async function main() {
   // 复制 node.exe
   await fsp.copyFile(nodeExePath, path.join(BinDir, 'node.exe'));
 
-  // 复制资源
+  // 复制资源（注意：排除 config/env.yaml，包含根目录下的 说明书/ 若存在）
   const copyList = [
     'main.js',
     'modules',
@@ -120,7 +120,7 @@ async function main() {
     'tools',
     'config',
     'prompts',
-    'Document',
+    '说明书',
     'sourcefiles',
     'package.json',
     'package-lock.json',
@@ -131,7 +131,26 @@ async function main() {
     const dst = path.join(AppDir, item);
     if (await pathExists(src)) {
       logInfo(`复制: ${item}`);
-      await copyRecursive(src, dst);
+      // 特殊处理 config：复制但排除 env.yaml
+      if (item === 'config') {
+        await ensureDir(dst);
+        const entries = await fsp.readdir(src, { withFileTypes: true });
+        for (const ent of entries) {
+          const s = path.join(src, ent.name);
+          const d = path.join(dst, ent.name);
+          if (ent.isFile() && ent.name === 'env.yaml') {
+            logInfo('排除: config/env.yaml');
+            continue;
+          }
+          if (ent.isDirectory()) {
+            await copyRecursive(s, d);
+          } else if (ent.isFile()) {
+            await fsp.copyFile(s, d);
+          }
+        }
+      } else {
+        await copyRecursive(src, dst);
+      }
     } else {
       logWarn(`跳过（不存在）: ${item}`);
     }

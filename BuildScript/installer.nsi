@@ -14,6 +14,7 @@
 !define APP_NAME "Batch LLM Processor"
 InstallDir "$PROGRAMFILES\${APP_NAME}"
 RequestExecutionLevel user
+Icon "${__FILEDIR__}\..\asset\.ico"
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
