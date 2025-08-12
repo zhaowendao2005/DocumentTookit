@@ -145,7 +145,8 @@ class MainApplication {
                 const runOutputDir = path.dirname(errorDir); // .../<runId>
                 const fixedRunId = path.basename(runOutputDir);
                 extraOptions = { reuseRunOutputDir: true, fixedRunOutputDir: runOutputDir, fixedRunId };
-                // 将 inputs 切换为错误目录下的文件集合（过滤 error.json）
+                // 将 inputs 切换为错误目录下“受支持类型”的文件集合（排除所有 .json）
+                const SUPPORTED_EXTS = new Set(['.md', '.txt', '.docx']);
                 const collectFiles = (dir) => {
                     const list = [];
                     const walk = (d) => {
@@ -153,8 +154,12 @@ class MainApplication {
                         for (const it of items) {
                             const p = path.join(d, it);
                             const st = fs.statSync(p);
-                            if (st.isDirectory()) walk(p);
-                            else if (!p.endsWith('error.json')) list.push(p);
+                            if (st.isDirectory()) {
+                                walk(p);
+                            } else {
+                                const ext = path.extname(p).toLowerCase();
+                                if (SUPPORTED_EXTS.has(ext)) list.push(p);
+                            }
                         }
                     };
                     walk(dir);
@@ -247,6 +252,22 @@ class MainApplication {
                     summary.writeMarkdown(json, result.runOutputDir);
                 } catch (e) {
                     this.ui.showWarning('生成运行总结失败：' + e.message);
+                }
+            }
+
+            // 重处理结果清理（删除 error 下已修复文件并更新清单）
+            if (reprocess && setup.reprocess.errorDir) {
+                try {
+                    const { applyCleanup } = require('./utils/error-cleanup');
+                    await applyCleanup({
+                        runOutputDir: extraOptions.fixedRunOutputDir,
+                        errorDir: setup.reprocess.errorDir,
+                        result,
+                        logger: this.ui,
+                        options: this.config.errors?.cleanup || {},
+                    });
+                } catch (e) {
+                    this.ui.showWarning(`清理错误目录失败：${e.message}`);
                 }
             }
 
