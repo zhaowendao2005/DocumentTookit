@@ -130,11 +130,91 @@ class MainApplication {
             // 执行批量处理
             const processor = new FileProcessor({ config: this.config, logger: console });
             this.ui.showInfo('开始批量处理...');
-            const result = await processor.runBatch(
-                { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
-                setup.inputs,
-                setup.outputDir
-            );
+            let result;
+            const mode = setup.mode || (this.config.processing?.default_mode || 'classic');
+            if (mode === 'structured') {
+                const StructuredFileProcessor = require('./modules/structured-file-processor');
+                const sproc = new StructuredFileProcessor({ config: this.config, logger: console });
+                this.ui.showInfo('以结构化模式处理...');
+                result = await sproc.runBatch(
+                    { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
+                    setup.inputs,
+                    setup.outputDir,
+                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts }
+                );
+
+                // 生成运行总结报告（md + json）
+                try {
+                    const RunSummary = require('./modules/run-summary');
+                    const TokenCounter = require('./utils/token-counter');
+                    const summary = new RunSummary({ logger: console });
+                    const tc = new TokenCounter();
+                    // 直接读取当前内存统计不可得，这里仅读取日志不可行；简化为跳过详细token统计或由处理器返回汇总
+                    const json = summary.generateSummaryJson({
+                        runId: result.runId,
+                        runOutputDir: result.runOutputDir,
+                        mode: 'structured',
+                        stats: result,
+                        tokenStats: result.tokenStats || null
+                    });
+                    summary.writeJson(json, result.runOutputDir);
+                    summary.writeMarkdown(json, result.runOutputDir);
+                } catch (e) {
+                    this.ui.showWarning('生成运行总结失败：' + e.message);
+                }
+
+                // 可选：让LLM基于运行JSON生成自然语言总结
+                if (setup.llmSummary?.enabled) {
+                    try {
+                        const fs = require('fs');
+                        const path = require('path');
+                        const jsonPath = path.join(result.runOutputDir, 'run_summary.json');
+                        if (fs.existsSync(jsonPath)) {
+                            const LLMClient = require('./modules/llm-client');
+                            const client = new LLMClient({ providers: this.config.providers, retry: this.config.retry });
+                            const jsonText = fs.readFileSync(jsonPath, 'utf8');
+                            const messages = [
+                                { role: 'system', content: '你是报告总结助手。基于给定的运行JSON数据，用中文生成清晰、结构化的运行总结（包含总览、模式占比、失败原因Top、Token用量如有、逐文件简表），仅输出Markdown。' },
+                                { role: 'user', content: jsonText }
+                            ];
+                            const resp = await client.chatCompletion({
+                                providerName: setup.llmSummary.model.provider,
+                                model: setup.llmSummary.model.model,
+                                messages,
+                                extra: { temperature: 0.1 },
+                                timeouts: { connectTimeoutMs: setup.timeouts.connectTimeoutMs, responseTimeoutMs: setup.timeouts.responseTimeoutMs }
+                            });
+                            const md = resp.text || '';
+                            fs.writeFileSync(path.join(result.runOutputDir, 'run_summary_llm.md'), md, 'utf8');
+                            this.ui.showInfo('已生成 LLM 运行总结: run_summary_llm.md');
+                        }
+                    } catch (e) {
+                        this.ui.showWarning('LLM 运行总结失败：' + e.message);
+                    }
+                }
+            } else {
+                result = await processor.runBatch(
+                    { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
+                    setup.inputs,
+                    setup.outputDir
+                );
+                // 经典模式同样生成运行总结
+                try {
+                    const RunSummary = require('./modules/run-summary');
+                    const summary = new RunSummary({ logger: console });
+                    const json = summary.generateSummaryJson({
+                        runId: result.runId,
+                        runOutputDir: result.runOutputDir,
+                        mode: 'classic',
+                        stats: result,
+                        tokenStats: result.tokenStats || null
+                    });
+                    summary.writeJson(json, result.runOutputDir);
+                    summary.writeMarkdown(json, result.runOutputDir);
+                } catch (e) {
+                    this.ui.showWarning('生成运行总结失败：' + e.message);
+                }
+            }
 
             this.ui.showSuccess(`处理完成：总数=${result.total} 成功=${result.succeeded} 失败=${result.failed}`);
             

@@ -14,6 +14,19 @@ class InteractiveUI {
         this.fileSelector = new FileSelector();
     }
 
+  /**
+   * 列出结构化 prompts 版本目录
+   */
+  listPromptVersions(rootDir) {
+    try {
+      if (!fs.existsSync(rootDir)) return [];
+      const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+      return entries.filter(e => e.isDirectory()).map(e => e.name);
+    } catch (_) {
+      return [];
+    }
+  }
+
     /**
      * 显示欢迎界面
      */
@@ -104,6 +117,18 @@ class InteractiveUI {
         // 1. 选择模型
         const modelSelection = await this.selectModel(config.providers);
         
+    // 1.1 选择输出模式（Classic / Structured）
+    const modeAnswer = await inquirer.prompt([{
+      type: 'list',
+      name: 'mode',
+      message: chalk.cyan('选择输出模式:'),
+      choices: [
+        { name: 'Classic - 直接输出CSV', value: 'classic' },
+        { name: 'Structured - 输出rows JSON→本地转CSV', value: 'structured' }
+      ],
+      default: (config.processing?.default_mode || 'classic')
+    }]);
+
         // 2. 选择输入（支持目录树选择与多选）
         const inputs = await this.selectInputs(config.directories.input_dir);
         
@@ -120,13 +145,58 @@ class InteractiveUI {
         // 6. 覆盖时间参数
         const timeoutConfig = await this.configureTimeouts(config.network || {});
 
+    // 7. 若为 Structured，选择提示词版本与修复回合
+    let structured = null;
+    if (modeAnswer.mode === 'structured') {
+      const promptsRoot = config.structured?.prompts_root || './prompts/StructuredFileProcessor';
+      const versions = this.listPromptVersions(promptsRoot);
+      const versionAnswer = await inquirer.prompt([{
+        type: 'list',
+        name: 'promptVersion',
+        message: chalk.cyan('选择提示词版本:'),
+        choices: versions.length ? versions : ['v1.0'],
+        default: config.structured?.default_prompt_version || 'v1.0'
+      }]);
+      const repairAnswer = await inquirer.prompt([{
+        type: 'number',
+        name: 'repairAttempts',
+        message: chalk.cyan('JSON纠错回合上限(0-3):'),
+        default: config.structured?.max_repair_attempts ?? 2,
+        validate: (n) => (n >= 0 && n <= 3) ? true : chalk.red('范围 0-3')
+      }]);
+      structured = {
+        mode: 'structured',
+        promptVersion: versionAnswer.promptVersion,
+        repairAttempts: repairAnswer.repairAttempts
+      };
+    }
+
+    // 8. 可选：让 LLM 在任务结束后根据 JSON 生成总结报告（单独选择模型）
+    const wantLLMSummary = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'enableLLMSummary',
+      message: chalk.cyan('任务结束后是否让LLM生成总结报告（基于运行JSON）？'),
+      default: false
+    }]);
+    let llmSummaryModel = null;
+    if (wantLLMSummary.enableLLMSummary) {
+      const modelSel = await this.selectModel(config.providers);
+      llmSummaryModel = modelSel;
+    }
+
         return {
             model: modelSelection,
             inputs: inputs,
             outputDir: outputDir,
             fileCount: fileCount,
             validation: validationConfig,
-            timeouts: timeoutConfig
+      timeouts: timeoutConfig,
+      mode: modeAnswer.mode,
+        structured: structured,
+        llmSummary: {
+          enabled: wantLLMSummary.enableLLMSummary,
+          model: llmSummaryModel
+        }
         };
     }
 
@@ -447,6 +517,14 @@ class InteractiveUI {
         console.log(`  输入目录: ${chalk.green(config.directories.input_dir)}`);
         console.log(`  输出目录: ${chalk.green(config.directories.output_dir)}`);
         console.log(`  候选工具目录: ${chalk.green(config.directories.candidate_tools_dir)}`);
+
+    // 模式信息
+    console.log(chalk.yellow('\n🧭 输出模式:'));
+    console.log(`  默认模式: ${chalk.green(config.processing?.default_mode || 'classic')}`);
+    console.log(`  允许回退: ${chalk.green(config.processing?.allow_fallback ? '是' : '否')}`);
+    if (config.processing?.allow_fallback) {
+      console.log(`  回退模式: ${chalk.green(config.processing?.fallback_mode || 'classic')}`);
+    }
 
         // 显示并发配置
         console.log(chalk.yellow('\n⚡ 并发配置:'));

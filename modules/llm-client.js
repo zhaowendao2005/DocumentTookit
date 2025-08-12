@@ -62,8 +62,10 @@ class LLMClient {
     let lastErr = null;
     for (let attempt = 0; attempt <= (this.retry.max_retry_count || 0); attempt++) {
       try {
-        // 快速连通性检查（ping models端点），避免把长响应超时当作网络不通
-        await this.pingProvider({ baseUrl, apiKey, timeout: connectTimeoutMs });
+        // 可选连通性检查（默认关闭）
+        if (extra && extra.ping === true) {
+          await this.pingProvider({ baseUrl, apiKey, timeout: connectTimeoutMs });
+        }
 
         // 优先使用 OpenAI SDK（若可用）
         if (OpenAI) {

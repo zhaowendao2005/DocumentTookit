@@ -176,13 +176,16 @@ class FileProcessor {
     // 全部请求完成后，逐文件汇总与输出
     let succeeded = 0;
     let failed = 0;
+    const fileSummaries = [];
     for (const [rel, meta] of fileMetaMap.entries()) {
       try {
         await this.finalizeFileResult(rel, meta, requestCount);
         succeeded++;
+        fileSummaries.push({ filename: rel, mode: 'classic', succeeded: true, fallback: false });
       } catch (e) {
         failed++;
         this.logger.error(`汇总失败: ${rel} - ${e.message}`);
+        fileSummaries.push({ filename: rel, mode: 'classic', succeeded: false, fallback: false, error: e.message });
       }
     }
 
@@ -191,7 +194,8 @@ class FileProcessor {
       await this.csvMerger.mergeCsvFilesInteractive(runOutputDir, runOutputDir);
     }
 
-    return { total: files.length, succeeded, failed };
+    const tokenStats = this.tokenCounter.getTokenStats();
+    return { total: files.length, succeeded, failed, runId, runOutputDir, files: fileSummaries, tokenStats };
   }
 
   /**
