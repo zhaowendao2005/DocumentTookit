@@ -1,0 +1,70 @@
+# Colipot 方案模板（填写后可在主程序中一键选择运行）
+
+# 方案标识（必填，唯一）。如未填写，默认使用文件名。
+name: "Plan1"
+
+# 展示名称（推荐填写，UI 列表展示用）
+display_name: "Plan1 - 结构化·三次采样·中等并发"
+
+# 选择的模型（必填，需与 config/env.yaml 中的 providers 对应）
+model:
+  # 提供商名称，如："PinhaoMo"、"KFC国产特价0.5"、"KFC国产特价0.2"、"KFC国产特价 gemini全系列"
+  provider: "KFC国产特价0.5"
+  # 模型名称，必须存在于该提供商 models 列表中
+  model: "gemini-2.5-flash"
+
+# 处理模式（可选）
+processing:
+  # classic | structured
+  mode: "structured"
+
+# 结构化模式参数（当 processing.mode=structured 时生效）
+structured:
+  # 提示词版本（目录为 ./prompts/StructuredFileProcessor/<version>/ ）
+  prompt_version: "Version1"
+  # JSON 纠错回合上限（0-3）
+  repair_attempts: 2
+
+# 校验配置（可选）
+validation:
+  # 是否对同一文件多次采样请求
+  enable_multiple_requests: true
+  # 采样次数（1-10，启用多次采样时≥2更有意义）
+  request_count: 3
+  # 多样本语义相似度阈值（0.0-1.0）
+  similarity_threshold: 0.8
+
+# 网络超时（毫秒，可选）
+network:
+  # 连接握手超时
+  connect_timeout_ms: 3000
+  # 响应等待超时
+  response_timeout_ms: 60000
+
+# 并发（可选，若不填默认使用 env.yaml 的 concurrency）
+concurrency:
+  # 同时并发请求数（建议根据服务端限流与带宽设置）
+  max_concurrent_requests: 10
+
+# 输入与输出路径（必填）
+paths:
+  # 输入目标：支持目录与文件，支持混合；相对路径相对于项目根目录
+  inputs:
+    - "./data/input"
+  # 输出根目录：实际运行将自动创建时间戳子目录
+  output_dir: "./data/output"
+
+# 后处理（可选）
+postprocess:
+  # 处理结束后是否自动合并本次输出目录下的 CSV
+  merge_csv: true
+
+# 运行完成后是否让 LLM 基于运行 JSON 生成自然语言总结（可选）
+llm_summary:
+  enabled: false
+  # 若启用，可独立指定用于总结的模型（可省略则默认与上方 model 相同）
+  model:
+    provider: "KFC国产特价0.5"
+    model: "gemini-2.5-flash"
+
+

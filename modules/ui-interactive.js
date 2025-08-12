@@ -81,6 +81,11 @@ class InteractiveUI {
                 value: 'text_splitter',
                 description: '使用正则表达式进行多级文本分割'
             },
+      {
+        name: '🧩 Colipot 预置方案',
+        value: 'colipot',
+        description: '从 config/ColipotConfig/*.yaml 选择一份预置方案一键运行'
+      },
             {
                 name: '⚙️  配置管理',
                 value: 'config',
@@ -170,6 +175,7 @@ class InteractiveUI {
         repairAttempts: repairAnswer.repairAttempts
       };
     }
+    
 
     // 8. 可选：让 LLM 在任务结束后根据 JSON 生成总结报告（单独选择模型）
     const wantLLMSummary = await inquirer.prompt([{
@@ -198,6 +204,78 @@ class InteractiveUI {
           model: llmSummaryModel
         }
         };
+    }
+
+    /**
+     * Colipot 模式：选择方案并返回标准化配置
+     */
+    async colipotSetup(config) {
+        const PlanRegistry = require('./colipot/plan-registry');
+        const PlanInjector = require('./colipot/plan-injector');
+        const registry = new PlanRegistry();
+        const plans = registry.getAll();
+
+        if (!plans || plans.length === 0) {
+            console.log(chalk.yellow('\n⚠️  未在 config/ColipotConfig/ 下找到任何方案 (YAML)。'));
+            return null;
+        }
+
+        const choices = plans.map((p) => ({
+            name: `${p.display_name || p.name}  (${p.model.provider}/${p.model.model})`,
+            value: p.name,
+            short: p.name,
+        }));
+
+        const sel = await require('inquirer').prompt([
+            {
+                type: 'list',
+                name: 'plan',
+                message: chalk.cyan('选择一个 Colipot 方案:'),
+                choices,
+                pageSize: 12,
+            },
+        ]);
+
+        const plan = registry.getByName(sel.plan);
+        if (!plan) return null;
+
+        // 显示摘要
+        console.log(chalk.cyan('\n📄 方案摘要'));
+        console.log(chalk.gray('─'.repeat(60)));
+        console.log(`名称: ${plan.display_name || plan.name}`);
+        console.log(`模型: ${plan.model.provider} / ${plan.model.model}`);
+        console.log(`模式: ${plan.processing?.mode || (config.processing?.default_mode || 'classic')}`);
+        console.log(`输入: ${(plan.paths?.inputs || []).join(', ')}`);
+        console.log(`输出: ${plan.paths?.output_dir}`);
+        if (plan.validation) {
+            console.log(`校验: enable=${!!plan.validation.enable_multiple_requests} count=${plan.validation.request_count ?? '-'} thr=${plan.validation.similarity_threshold ?? '-'}`);
+        }
+        if (plan.structured) {
+            console.log(`结构化: version=${plan.structured.prompt_version ?? '-'} repair=${plan.structured.repair_attempts ?? '-'}`);
+        }
+        console.log(chalk.gray('─'.repeat(60)));
+
+        const go = await require('inquirer').prompt([
+            { type: 'confirm', name: 'confirm', message: chalk.yellow('确认按该方案直接运行？'), default: true },
+        ]);
+        if (!go.confirm) return null;
+
+        // 映射为现有 runBatch 入参
+        const mapped = PlanInjector.mapToRunBatchArgs(plan, config);
+
+        // 返回与 interactiveSetup 结构相兼容的对象
+        const ret = {
+            model: mapped.modelSel,
+            inputs: mapped.inputs,
+            outputDir: mapped.outputDir,
+            fileCount: await this.countFilesInTargets(mapped.inputs),
+            validation: mapped.modelSel.validation,
+            timeouts: mapped.modelSel.timeouts,
+            mode: mapped.mode,
+            structured: mapped.mode === 'structured' ? { promptVersion: mapped.options?.promptVersion, repairAttempts: mapped.options?.repairAttempts } : null,
+            llmSummary: { enabled: false, model: null },
+        };
+        return ret;
     }
 
     /**

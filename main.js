@@ -68,6 +68,9 @@ class MainApplication {
                     case 'batch_llm':
                         await this.handleBatchLLM();
                         break;
+                    case 'colipot':
+                        await this.handleColipot();
+                        break;
                         
                     case 'docx_to_md':
                         await this.handleDocxToMd();
@@ -220,6 +223,84 @@ class MainApplication {
             
         } catch (error) {
             this.ui.showError(`批量LLM处理失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 处理 Colipot 预置方案批量运行
+     */
+    async handleColipot() {
+        try {
+            // 选择方案
+            const setup = await this.ui.colipotSetup(this.config);
+            if (!setup) {
+                this.ui.showWarning('未选择方案或已取消');
+                return;
+            }
+
+            // 确保目录存在
+            const ConfigLoader = require('./config/config-loader');
+            ConfigLoader.ensureDirectories(this.config);
+
+            // 执行批量处理（按模式）
+            const mode = setup.mode || (this.config.processing?.default_mode || 'classic');
+            let result;
+            if (mode === 'structured') {
+                const StructuredFileProcessor = require('./modules/structured-file-processor');
+                const sproc = new StructuredFileProcessor({ config: this.config, logger: console });
+                this.ui.showInfo('以结构化模式处理 (Colipot 方案)...');
+                result = await sproc.runBatch(
+                    { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
+                    setup.inputs,
+                    setup.outputDir,
+                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts }
+                );
+
+                // 生成运行总结报告
+                try {
+                    const RunSummary = require('./modules/run-summary');
+                    const summary = new RunSummary({ logger: console });
+                    const json = summary.generateSummaryJson({
+                        runId: result.runId,
+                        runOutputDir: result.runOutputDir,
+                        mode: 'structured',
+                        stats: result,
+                        tokenStats: result.tokenStats || null
+                    });
+                    summary.writeJson(json, result.runOutputDir);
+                    summary.writeMarkdown(json, result.runOutputDir);
+                } catch (e) {
+                    this.ui.showWarning('生成运行总结失败：' + e.message);
+                }
+            } else {
+                const FileProcessor = require('./modules/file-processor');
+                const processor = new FileProcessor({ config: this.config, logger: console });
+                this.ui.showInfo('以经典模式处理 (Colipot 方案)...');
+                result = await processor.runBatch(
+                    { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
+                    setup.inputs,
+                    setup.outputDir
+                );
+                try {
+                    const RunSummary = require('./modules/run-summary');
+                    const summary = new RunSummary({ logger: console });
+                    const json = summary.generateSummaryJson({
+                        runId: result.runId,
+                        runOutputDir: result.runOutputDir,
+                        mode: 'classic',
+                        stats: result,
+                        tokenStats: result.tokenStats || null
+                    });
+                    summary.writeJson(json, result.runOutputDir);
+                    summary.writeMarkdown(json, result.runOutputDir);
+                } catch (e) {
+                    this.ui.showWarning('生成运行总结失败：' + e.message);
+                }
+            }
+
+            this.ui.showSuccess(`处理完成：总数=${result.total} 成功=${result.succeeded} 失败=${result.failed}`);
+        } catch (error) {
+            this.ui.showError(`Colipot 批量处理失败: ${error.message}`);
         }
     }
 
