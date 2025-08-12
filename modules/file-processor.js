@@ -49,6 +49,12 @@ class FileProcessor {
     this.lastTimeouts = modelSel.timeouts || null;
     // 保存校验配置
     this.lastValidation = modelSel.validation || null;
+    // 若UI提供了相似度阈值，则应用到语义校验器
+    const uiSimTh = this.lastValidation?.similarityThreshold;
+    if (typeof uiSimTh === 'number' && uiSimTh >= 0 && uiSimTh <= 1) {
+      this.semanticValidator.config.similarityThreshold = uiSimTh;
+      this.logger.info(`已应用交互式相似度阈值: ${uiSimTh}`);
+    }
     // 为本次运行创建时间戳输出子目录（东八区本地时间）
     const runId = this.formatLocalTimestamp('Asia/Shanghai');
     const runOutputDir = path.join(outputDir, runId);
@@ -80,7 +86,9 @@ class FileProcessor {
 
     // 构建所有请求任务（扁平化）：文件数 × request_count
     const enableMulti = !!(this.lastValidation?.enableMultiple);
-    const requestCount = enableMulti ? Math.min(Math.max(1, this.config.validation.request_count || 1), 10) : 1;
+    const uiRequestCount = this.lastValidation?.requestCount;
+    const baseRequestCount = (typeof uiRequestCount === 'number' ? uiRequestCount : (this.config.validation.request_count || 1));
+    const requestCount = enableMulti ? Math.min(Math.max(1, baseRequestCount), 10) : 1;
     
     // 调试输出
     this.logger.info(`多次校验开关: ${enableMulti ? '开启' : '关闭'}`);
@@ -199,10 +207,18 @@ class FileProcessor {
 
     const content = await FileUtils.readFile(absInputPath);
 
-    // 如果启用多次请求，进行N次采样
-    const enableMulti = !!this.config.validation?.enable_multiple_requests;
-    const requestCount = enableMulti ? Math.min(Math.max(1, this.config.validation.request_count || 1), 10) : 1;
-    const similarityThreshold = this.config.validation?.similarity_threshold ?? 0.8;
+    // 如果启用多次请求，进行N次采样（优先使用交互式配置）
+    const enableMulti = !!(this.lastValidation?.enableMultiple ?? this.config.validation?.enable_multiple_requests);
+    const uiRequestCount2 = this.lastValidation?.requestCount;
+    const baseRequestCount2 = (typeof uiRequestCount2 === 'number' ? uiRequestCount2 : (this.config.validation?.request_count || 1));
+    const requestCount = enableMulti ? Math.min(Math.max(1, baseRequestCount2), 10) : 1;
+    const simTh2 = (typeof this.lastValidation?.similarityThreshold === 'number'
+      ? this.lastValidation.similarityThreshold
+      : (this.config.validation?.similarity_threshold ?? 0.8));
+    // 应用阈值到语义校验器（以便后续 validateMultipleSamples 一致）
+    if (typeof simTh2 === 'number' && simTh2 >= 0 && simTh2 <= 1) {
+      this.semanticValidator.config.similarityThreshold = simTh2;
+    }
 
     this.logger.info(`准备发送: ${rel} (请求次数=${requestCount})`);
     // 中间文件：逐条写入，格式为 JSONL，每行一个结果 { index, text, usage }
@@ -243,7 +259,7 @@ class FileProcessor {
     if (enableMulti && results.length > 1) {
       const similarities = await this.sim.calculateBatchSimilarity(results);
       const avg = this.sim.calculateAverageSimilarity(similarities);
-      const anomalies = this.sim.detectAnomalies(similarities, similarityThreshold);
+      const anomalies = this.sim.detectAnomalies(similarities, simTh2);
 
       // 简单多数投票：出现次数最多的文本作为最终输出
       const counter = new Map();
