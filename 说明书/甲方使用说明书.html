@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1" />
+	<title>文档处理集成工具 · 甲方使用说明书（华丽展示版）</title>
+	<style>
+		:root {
+			--bg: #0f1220;
+			--card: #171a2b;
+			--muted: #8a90aa;
+			--text: #e8ebff;
+			--primary: #6ea8fe;
+			--primary-2: #a0c4ff;
+			--acc: #5eead4;
+			--ok: #34d399;
+			--warn: #fbbf24;
+			--err: #f87171;
+			--border: #232742;
+		}
+		* { box-sizing: border-box; }
+		html, body { height: 100%; }
+		body {
+			margin: 0;
+			font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "PingFang SC", "Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+			background: radial-gradient(1200px 800px at 10% -10%, #182042 0%, transparent 60%),
+				radial-gradient(1000px 700px at 120% 10%, #1a2446 0%, transparent 60%),
+				var(--bg);
+			color: var(--text);
+			line-height: 1.65;
+		}
+		.container {
+			display: grid;
+			grid-template-columns: 280px 1fr;
+			gap: 20px;
+			max-width: 1200px;
+			margin: 0 auto;
+			padding: 24px;
+		}
+		@media (max-width: 1024px) {
+			.container { grid-template-columns: 1fr; }
+		}
+		.header {
+			position: sticky; top: 0; z-index: 5;
+			backdrop-filter: saturate(140%) blur(6px);
+			background: linear-gradient(180deg, rgba(15,18,32,.85) 0%, rgba(15,18,32,.4) 100%);
+			border-bottom: 1px solid var(--border);
+		}
+		.header-inner { max-width: 1200px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+		.brand {
+			font-weight: 700; letter-spacing: .3px;
+			background: linear-gradient(90deg, #a0c4ff, #5eead4 60%, #f472b6);
+			-webkit-background-clip: text; background-clip: text; color: transparent;
+		}
+		.header .actions { margin-left: auto; display: flex; gap: 8px; }
+		.btn { cursor: pointer; color: var(--text); background: var(--card); border: 1px solid var(--border); padding: 8px 12px; border-radius: 10px; font-size: 14px; }
+		.btn:hover { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(110,168,254,.15) inset; }
+
+		.sidebar {
+			position: sticky; top: 76px; align-self: start;
+			background: linear-gradient(180deg, rgba(23,26,43,.85), rgba(23,26,43,.6));
+			border: 1px solid var(--border); border-radius: 14px; padding: 16px; max-height: calc(100vh - 100px); overflow: auto;
+		}
+		.sidebar h3 { margin: 0 0 10px; font-size: 14px; color: var(--muted); font-weight: 600; }
+		.toc { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+		.toc a { color: var(--text); text-decoration: none; opacity: .88; font-size: 14px; }
+		.toc a:hover { color: var(--primary-2); }
+		.toc .lvl-3 { padding-left: 12px; font-size: 13px; opacity: .78; }
+
+		.main { display: grid; gap: 16px; }
+		.hero {
+			background: linear-gradient(180deg, rgba(110,168,254,.08), rgba(94,234,212,.06));
+			border: 1px solid var(--border); border-radius: 16px; padding: 24px;
+		}
+		.hero h1 { margin: 0 0 8px; font-size: 28px; }
+		.hero p { margin: 8px 0 0; color: var(--muted); }
+
+		.section { background: linear-gradient(180deg, rgba(23,26,43,.85), rgba(23,26,43,.6)); border: 1px solid var(--border); border-radius: 16px; padding: 22px; }
+		.section h2 { margin: 0 0 12px; font-size: 22px; }
+		.section h3 { margin: 20px 0 8px; font-size: 18px; color: var(--primary-2); }
+		.lead { color: var(--muted); }
+		.badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: rgba(110,168,254,.08); color: var(--primary-2); margin-left: 6px; }
+		.kv { display: grid; gap: 8px; }
+		.kv li { margin: 0 0 2px; }
+		ul { margin: 10px 0 0 18px; }
+		code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+		pre { background: #0c0f1c; border: 1px solid var(--border); padding: 12px; border-radius: 12px; overflow: auto; }
+		code { color: #eab308; }
+		.kbd { background: #0c0f1c; border: 1px solid var(--border); border-bottom-color: #000; padding: 1px 6px; border-radius: 6px; font-size: 13px; }
+		.note { border-left: 3px solid var(--primary); padding: 10px 12px; background: rgba(110,168,254,.07); border-radius: 8px; }
+		.ok { color: var(--ok); }
+		.warn { color: var(--warn); }
+		.err { color: var(--err); }
+
+		.footer { color: var(--muted); text-align: center; padding: 28px 0 40px; }
+		.go-top { position: fixed; right: 20px; bottom: 20px; z-index: 10; display: none; }
+		.go-top.show { display: block; }
+
+		/* 简易模式：隐藏高级内容 */
+		.simple-mode .advanced { display: none !important; }
+
+		/* Flow SVG 卡片 */
+		.svg-card { background: linear-gradient(180deg, rgba(23,26,43,.85), rgba(23,26,43,.6)); border: 1px solid var(--border); border-radius: 16px; padding: 12px; }
+		.svg-wrap { width: 100%; overflow: auto; border-radius: 10px; }
+		.legend { display: flex; gap: 12px; color: var(--muted); font-size: 13px; }
+		.legend i { display: inline-block; width: 14px; height: 8px; border-radius: 999px; margin-right: 6px; }
+		.legend .l1 i { background: #6ea8fe; }
+		.legend .l2 i { background: #5eead4; }
+		.legend .l3 i { background: #fbbf24; }
+	</style>
+</head>
+<body>
+	<header class="header">
+		<div class="header-inner">
+			<div class="brand">文档处理集成工具 · 甲方使用说明书</div>
+			<div class="actions">
+				<button class="btn" id="btnSimple">仅看三步</button>
+				<button class="btn" id="btnAll">展开全部</button>
+				<button class="btn" id="btnTop">回到顶部</button>
+			</div>
+		</div>
+	</header>
+
+	<main class="container">
+		<aside class="sidebar">
+			<h3>目录</h3>
+			<ol class="toc" id="toc"></ol>
+		</aside>
+
+		<section class="main">
+			<div class="hero">
+				<h1>文档处理集成工具 <span class="badge">非技术版</span></h1>
+				<p class="lead">为安装版交付而简化：三步上手 + 流程图一图看懂。复杂环节已隐藏，随用随开。</p>
+			</div>
+
+			<!-- 极速上手 3 步 -->
+			<section class="section" id="quick-3">
+				<h2>极速上手（3 步）</h2>
+				<ol>
+					<li>安装：双击安装包（已内置 Node），一路“下一步”。</li>
+					<li>启动：开始菜单/桌面找到“文档处理集成工具”，双击打开。</li>
+					<li>处理：在主菜单选“批量LLM处理” → 选择输入 → 一键开始（其余保持默认）。</li>
+				</ol>
+				<p class="note">如需 DOCX→Markdown：主菜单选“Docx转Markdown”，按提示选择目录即可。</p>
+			</section>
+
+			<!-- 一图看懂（Flow + 贝塞尔曲线） -->
+			<section class="section" id="flows-visual">
+				<h2>一图看懂处理流程（Flow + 贝塞尔）</h2>
+				<div class="legend" style="margin-bottom:10px;">
+					<span class="l1"><i></i>Classic 流程</span>
+					<span class="l2"><i></i>Structured 流程</span>
+					<span class="l3"><i></i>错误重处理回路</span>
+				</div>
+				<div class="svg-card">
+					<div class="svg-wrap">
+						<svg viewBox="0 0 1200 520" width="100%" height="auto" xmlns="http://www.w3.org/2000/svg">
+							<defs>
+								<linearGradient id="gBox" x1="0" x2="1">
+									<stop offset="0%" stop-color="#1f2a44"/>
+									<stop offset="100%" stop-color="#202b4a"/>
+								</linearGradient>
+								<marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+									<path d="M0,0 L12,6 L0,12 Z" fill="#6ea8fe"/>
+								</marker>
+								<marker id="arrowMint" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+									<path d="M0,0 L12,6 L0,12 Z" fill="#5eead4"/>
+								</marker>
+								<marker id="arrowWarn" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+									<path d="M0,0 L12,6 L0,12 Z" fill="#fbbf24"/>
+								</marker>
+							</defs>
+
+							<!-- 节点绘制函数的伪样式（用矩形+文字）-->
+							<script type="application/ecmascript"><![CDATA[
+								function box(ctx,x,y,w,h,r){
+									ctx.beginPath();
+									ctx.moveTo(x+r,y);
+									ctx.arcTo(x+w,y,x+w,y+h,r);
+									ctx.arcTo(x+w,y+h,x,y+h,r);
+									ctx.arcTo(x,y+h,x,y,r);
+									ctx.arcTo(x,y,x+w,y,r);
+									ctx.closePath();
+								}
+							]]></script>
+
+							<!-- Classic 流程（蓝） -->
+							<g id="classic" font-family="inherit" fill="none" stroke="#6ea8fe">
+								<rect x="60" y="60" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="150" y="98" text-anchor="middle" fill="#e8ebff">输入（TXT/MD/DOCX）</text>
+
+								<rect x="320" y="60" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="410" y="98" text-anchor="middle" fill="#e8ebff">LLM（Classic）</text>
+
+								<rect x="580" y="60" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="670" y="98" text-anchor="middle" fill="#e8ebff">CSV 校验/修复</text>
+
+								<rect x="840" y="60" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="930" y="98" text-anchor="middle" fill="#e8ebff">输出 CSV</text>
+
+								<path d="M240,90 C280,90 300,90 320,90" stroke="#6ea8fe" stroke-width="3" marker-end="url(#arrowBlue)"/>
+								<path d="M500,90 C540,90 560,90 580,90" stroke="#6ea8fe" stroke-width="3" marker-end="url(#arrowBlue)"/>
+								<path d="M760,90 C800,90 820,90 840,90" stroke="#6ea8fe" stroke-width="3" marker-end="url(#arrowBlue)"/>
+							</g>
+
+							<!-- Structured 流程（薄荷绿） -->
+							<g id="structured" font-family="inherit" fill="none" stroke="#5eead4">
+								<rect x="60" y="210" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="150" y="248" text-anchor="middle" fill="#e8ebff">输入（TXT/MD/DOCX）</text>
+
+								<rect x="320" y="210" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="410" y="248" text-anchor="middle" fill="#e8ebff">LLM（JSON rows）</text>
+
+								<rect x="580" y="210" rx="12" ry="12" width="220" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="690" y="246" text-anchor="middle" fill="#e8ebff">Schema 校验 / JSON 修复</text>
+
+								<rect x="860" y="210" rx="12" ry="12" width="220" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="970" y="246" text-anchor="middle" fill="#e8ebff">转 CSV → CSV 校验/修复</text>
+
+								<path d="M240,240 C280,240 300,240 320,240" stroke="#5eead4" stroke-width="3" marker-end="url(#arrowMint)"/>
+								<path d="M500,240 C540,240 560,240 580,240" stroke="#5eead4" stroke-width="3" marker-end="url(#arrowMint)"/>
+								<path d="M800,240 C830,240 850,240 860,240" stroke="#5eead4" stroke-width="3" marker-end="url(#arrowMint)"/>
+							</g>
+
+							<!-- 错误重处理回路（黄色曲线） -->
+							<g id="reprocess" fill="none" stroke="#fbbf24" stroke-width="3">
+								<rect x="900" y="360" rx="12" ry="12" width="180" height="60" fill="url(#gBox)" stroke="#2b3a68"/>
+								<text x="990" y="398" text-anchor="middle" fill="#e8ebff">错误目录（分类）</text>
+								<path d="M1030,120 C1100,160 1100,320 1030,360" marker-end="url(#arrowWarn)"/>
+								<path d="M930,390 C780,420 480,420 400,265" marker-end="url(#arrowWarn)"/>
+								<text x="1048" y="240" fill="#fbbf24">选择“错误重处理批次”</text>
+							</g>
+
+						</svg>
+					</div>
+				</div>
+				<p class="lead" style="margin-top:12px">默认推荐使用 <b>Structured</b>（更稳），必要时自动回退 <b>Classic</b>；失败自动归档，稍后可在主菜单一键“错误重处理”。</p>
+			</section>
+
+			<!-- 详细功能（高级，默认隐藏于“仅看三步”） -->
+			<section class="section advanced" id="what">
+				<h2>我能用它做什么（完整）</h2>
+				<ul>
+					<li>批量处理：TXT/MD/DOCX → CSV</li>
+					<li>模式：Classic / Structured（JSON→本地校验→CSV，可回退）</li>
+					<li>错误闭环：失败分类、重处理批次、自动清理</li>
+					<li>文档转换：DOCX → Markdown</li>
+					<li>文本分割：多级正则切片与导出</li>
+					<li>CSV 合并：目录内 CSV 合并</li>
+					<li>模型测试：连通性/时延/用量，并可导出报告</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="prereq">
+				<h2>使用前准备</h2>
+				<ul class="kv">
+					<li>操作系统：Windows 10/11（macOS / Linux 亦可）</li>
+					<li>安装包已内置 Node（无需单独安装）</li>
+					<li>（可选）Pandoc：用于 DOCX→MD</li>
+					<li>至少一个 OpenAI 兼容服务（<code>base_url</code> 与 <code>API Key</code>）</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="install">
+				<h2>命令行启动（可选）</h2>
+				<pre><code class="language-bash">node main.js</code></pre>
+				<p class="note">安装包用户可直接用开始菜单/桌面快捷方式，无需命令行。</p>
+			</section>
+
+			<section class="section advanced" id="flows">
+				<h2>典型工作流（详细）</h2>
+				<h3 id="flow-batch">批量 LLM 处理</h3>
+				<ol>
+					<li>选择“批量LLM处理” → 选择模型 → 选择模式（Classic / Structured）</li>
+					<li>选择输入：增强多选 / 单目录 / 多文件 / 错误重处理批次</li>
+					<li>设置可选参数：多次请求、相似度阈值、超时、提示词版本/修复回合等</li>
+					<li>运行中按 <span class="kbd">s</span>：先软停；再按一次为硬停</li>
+					<li>结果在 <code>data/output/时间戳/</code>，包含 <code>run_summary.json</code>/<code>.md</code> 与 <code>error/</code></li>
+				</ol>
+
+				<h3 id="flow-retry">错误重处理闭环</h3>
+				<ul>
+					<li>在“选择输入方式”时选择“错误重处理批次”</li>
+					<li>按时间倒序列出历史批次，选择后自动收集失败样本再处理</li>
+					<li>成功后回写原目录并自动清理 <code>error/</code> 清单</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="results">
+				<h2>结果文件与报告</h2>
+				<ul>
+					<li><code>run_summary.json</code> / <code>run_summary.md</code>：总览、错误统计、文件结果、Token 用量</li>
+					<li><code>error/error_manifest.json</code>：失败清单与分类（供重处理批次）</li>
+					<li><code>temp/</code>：中间 JSONL 与校验报告（内部使用）</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="faq">
+				<h2>常见问题（FAQ）</h2>
+				<ul>
+					<li><b>启动提示缺少配置？</b> 复制 <code>config/env.yaml.example</code> → <code>config/env.yaml</code> 并填写 providers。</li>
+					<li><b>模型超时或不通？</b> 检查 <code>base_url</code>/<code>api_key</code>；增大 <code>response_timeout_ms</code>；或运行诊断：
+						<pre><code class="language-bash">node main.js --diag</code></pre>
+					</li>
+					<li><b>DOCX→MD 报 Pandoc 未安装？</b> 安装 Pandoc 并确认 <code>pandoc --version</code> 可运行。</li>
+					<li><b>合并 CSV 表头不一致？</b> 以第一份表头为准，后续仅合并数据行。</li>
+					<li><b>质量波动？</b> 开启“多次请求 + 相似度阈值”，或使用 Structured；必要时提高 <code>request_count</code>。</li>
+					<li><b>如何紧急停止？</b> 运行中按 <span class="kbd">s</span>：先软停，再按一次为硬停。</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="terms">
+				<h2>术语解释</h2>
+				<ul>
+					<li><b>Classic</b>：模型直接输出 CSV，速度快，格式偶有不稳</li>
+					<li><b>Structured</b>：模型输出 JSON，本地严格校验/修复后转 CSV，质量更稳；可回退 Classic</li>
+					<li><b>多次请求与相似度</b>：对同一内容多次请求，比较一致性并自动选择更稳结果</li>
+					<li><b>回退</b>：Structured 失败时自动退回 Classic 再尝试</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="support">
+				<h2>支持的文件类型</h2>
+				<ul>
+					<li>输入：<code>.txt</code>、<code>.md</code>、<code>.docx</code></li>
+					<li>输出：<code>.csv</code>（主），<code>.md</code>（转换），部分中间 <code>.json/.jsonl</code>（内部）</li>
+				</ul>
+			</section>
+
+			<section class="section advanced" id="appendix">
+				<h2>附录：最小可用配置示例（节选）</h2>
+				<pre><code class="language-yaml">providers:
+  - name: "OpenAI"
+    base_url: "https://api.openai.com"
+    api_key: "YOUR_OPENAI_API_KEY"
+    models: ["gpt-4o-mini"]
+
+directories:
+  input_dir: "./data/input"
+  output_dir: "./data/output"
+  temp_dir: "./data/temp"
+  candidate_tools_dir: "./sourcefiles"
+
+processing:
+  default_mode: "structured"
+  allow_fallback: true
+  fallback_mode: "classic"
+
+validation:
+  enable_multiple_requests: true
+  request_count: 3
+  similarity_threshold: 0.8</code></pre>
+				<p>如需进一步定制（增加提供商、修改并发、替换提示词版本等），请联系实施人员。</p>
+			</section>
+
+			<p class="footer">祝您使用顺利！</p>
+		</section>
+	</main>
+
+	<button class="btn go-top" id="goTop">▲ 顶部</button>
+
+	<script>
+		// 生成目录
+		(function genTOC(){
+			const toc = document.getElementById('toc');
+			const headings = document.querySelectorAll('.main h2, .main h3');
+			headings.forEach(h => {
+				if (!h.id) h.id = (h.textContent||'').trim().replace(/\s+/g,'-');
+				const li = document.createElement('li');
+				if (h.tagName === 'H3') li.className = 'lvl-3';
+				const a = document.createElement('a');
+				a.href = '#' + h.id;
+				a.textContent = h.textContent;
+				li.appendChild(a);
+				toc.appendChild(li);
+			});
+		})();
+
+		// 模式切换：仅看三步 / 展开全部
+		document.getElementById('btnSimple').onclick = () => document.body.classList.add('simple-mode');
+		document.getElementById('btnAll').onclick = () => document.body.classList.remove('simple-mode');
+
+		// 交互按钮
+		document.getElementById('btnTop').onclick = () => window.scrollTo({ top:0, behavior:'smooth'});
+		document.getElementById('goTop').onclick = () => window.scrollTo({ top:0, behavior:'smooth'});
+
+		// 滚动显示“回到顶部”
+		const goTop = document.getElementById('goTop');
+		window.addEventListener('scroll', () => {
+			if (window.scrollY > 300) goTop.classList.add('show');
+			else goTop.classList.remove('show');
+		});
+	</script>
+</body>
+</html>

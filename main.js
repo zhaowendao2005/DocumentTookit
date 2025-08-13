@@ -114,6 +114,10 @@ class MainApplication {
                     case 'csv_merge':
                         await this.handleCsvMerge();
                         break;
+                
+                case 'csv_clean':
+                    await this.handleCsvClean();
+                    break;
                         
                     case 'text_splitter':
                         await this.handleTextSplitter();
@@ -500,6 +504,21 @@ class MainApplication {
             
         } catch (error) {
             this.ui.showError(`CSV合并失败: ${error.message}`);
+        }
+    }
+
+    async handleCsvClean() {
+        try {
+            const config = await this.ui.configureCsvClean(this.config);
+            if (!config) {
+                this.ui.showWarning('用户取消操作');
+                return;
+            }
+            const { runOnce } = require('./tools/csv-cleaner');
+            await runOnce({ target: config.target, outputDir: config.outputDir, treatCommonNull: config.treatCommonNull });
+            this.ui.showSuccess('CSV清洗完成');
+        } catch (error) {
+            this.ui.showError(`CSV清洗失败: ${error.message}`);
         }
     }
 

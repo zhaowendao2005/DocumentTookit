@@ -7,7 +7,8 @@
     "start": "node main.js",
     "dev": "node --inspect main.js",
     "docx2md": "node tools/docx_to_md_converter.js",
-    "text-splitter": "node tools/text-splitter-cli.js"
+    "text-splitter": "node tools/text-splitter-cli.js",
+    "csv:clean": "node tools/csv-cleaner.js"
   },
   "dependencies": {
     "@xenova/transformers": "^2.15.0",

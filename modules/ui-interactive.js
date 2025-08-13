@@ -77,6 +77,11 @@ class InteractiveUI {
                 description: '合并多个CSV文件为一个文件'
             },
             {
+                name: '🧼 CSV清洗工具',
+                value: 'csv_clean',
+                description: '删除第三列为空的行，逐文件输出'
+            },
+            {
                 name: '✂️  文本分割工具',
                 value: 'text_splitter',
                 description: '使用正则表达式进行多级文本分割'
@@ -940,6 +945,56 @@ class InteractiveUI {
             inputDir: answer.inputDir,
             outputDir: answer.outputDir
         };
+    }
+
+    /**
+     * 配置 CSV 清洗
+     */
+    async configureCsvClean(config) {
+        console.log(chalk.cyan('\n🧼 配置CSV清洗工具...\n'));
+
+        const answer = await inquirer.prompt([
+            {
+                type: 'input',
+                name: 'target',
+                message: chalk.cyan('请输入 CSV 文件或目录路径:'),
+                default: config.directories?.output_dir || './data/output',
+                validate: (input) => {
+                    try {
+                        const p = require('path').resolve(input);
+                        if (!require('fs').existsSync(p)) return chalk.red('路径不存在');
+                        return true;
+                    } catch (e) {
+                        return chalk.red('无效路径');
+                    }
+                }
+            },
+            {
+                type: 'input',
+                name: 'outputDir',
+                message: chalk.cyan('请输入清洗后 CSV 的输出目录:'),
+                default: config.directories?.output_dir || './data/output',
+                validate: (input) => {
+                    if (!input || input.trim() === '') return chalk.red('请输入输出目录');
+                    return true;
+                }
+            },
+            {
+                type: 'confirm',
+                name: 'treatCommonNull',
+                message: chalk.cyan('是否将 NULL/N-A/— 等也视为空？'),
+                default: false
+            },
+            {
+                type: 'confirm',
+                name: 'confirm',
+                message: chalk.yellow('确认开始清洗？'),
+                default: true
+            }
+        ]);
+
+        if (!answer.confirm) return null;
+        return { target: answer.target, outputDir: answer.outputDir, treatCommonNull: answer.treatCommonNull };
     }
 
     /**

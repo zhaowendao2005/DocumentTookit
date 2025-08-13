@@ -1,4 +1,6 @@
 !include "MUI2.nsh"
+!define MUI_ICON "${__FILEDIR__}\..\asset\.ico"
+!define MUI_UNICON "${__FILEDIR__}\..\asset\.ico"
 
 ; 输入参数（由构建脚本传入）。只校验，不重复定义，避免重复 !define 报错
 !ifndef PORTABLE_DIR
