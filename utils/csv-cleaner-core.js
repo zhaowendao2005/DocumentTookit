@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const Papa = require('papaparse');
+const CsvMetadataUtils = require('./csv-metadata');
 
 /**
  * CSV 清洗核心：删除第三列为空的行（保留表头）。
@@ -31,11 +32,19 @@ class CsvCleanerCore {
             return { header: null, keptRows: [], removed: [] };
         }
 
-        const header = rows[0];
+        // 识别元数据行（若首行最后一格以 [META] 开头，则视为元数据行）
+        let metaRow = null;
+        let headerIndex = 0;
+        if (CsvMetadataUtils.isMetadataRow(rows[0])) {
+            metaRow = rows[0];
+            headerIndex = 1;
+        }
+
+        const header = rows[headerIndex] || [];
         const keptRows = [header];
         const removed = [];
 
-        for (let i = 1; i < rows.length; i++) {
+        for (let i = headerIndex + 1; i < rows.length; i++) {
             const row = rows[i];
             // 容错：确保为数组
             const fields = Array.isArray(row) ? row : [row];
@@ -51,6 +60,10 @@ class CsvCleanerCore {
             keptRows.push(fields);
         }
 
+        // 若存在元数据行，清洗结果中保留元数据行作为第0行
+        if (metaRow) {
+            return { header, keptRows: [metaRow, ...keptRows], removed };
+        }
         return { header, keptRows, removed };
     }
 

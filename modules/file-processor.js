@@ -10,6 +10,7 @@ const CsvMerger = require('../utils/csv-merger');
 const CsvValidator = require('../utils/csv-validator');
 const SemanticValidator = require('./semantic-validator');
 const { ErrorClassifier, ErrorReporter } = require('../utils/errors');
+const CsvMetadataUtils = require('../utils/csv-metadata');
 
 /**
  * 批量文件处理器：读取 -> 请求LLM -> 校验 -> 输出
@@ -66,6 +67,16 @@ class FileProcessor {
     const tempDir = this.config.directories.temp_dir || path.join(path.dirname(outputDir), 'temp');
     this.ensureDir(runOutputDir);
     this.ensureDir(tempDir);
+
+    // 保存本次运行上下文（供元数据行使用）
+    this.currentRunContext = {
+      runId,
+      runOutputDir,
+      modelSel,
+      reprocess: !!(options.reuseRunOutputDir && options.fixedRunId),
+      timestamp: new Date().toISOString(),
+      addMetadataRow: (typeof options.addMetadataRow === 'boolean') ? options.addMetadataRow : (this.config?.output?.add_metadata_row ?? true),
+    };
 
     // 错误分类与归档
     const classifier = new ErrorClassifier();
@@ -253,10 +264,7 @@ class FileProcessor {
       }
     }
 
-    // 询问是否合并CSV文件
-    if (succeeded > 0) {
-      await this.csvMerger.mergeCsvFilesInteractive(runOutputDir, runOutputDir);
-    }
+    // 合并交互改由 main.js 的收尾后处理统一调度
 
     const tokenStats = this.tokenCounter.getTokenStats();
     const manifest = reporter.finalize();
@@ -641,8 +649,17 @@ class FileProcessor {
     this.semanticValidator.exportValidationReport(validationResult, reportPath);
 
     // 写入最终CSV
+    // 插入元数据行
+    const wantMeta = (this.currentRunContext && typeof this.currentRunContext.addMetadataRow === 'boolean')
+      ? this.currentRunContext.addMetadataRow
+      : (this.config?.output?.add_metadata_row ?? true);
+    let toWrite = finalCsv;
+    if (wantMeta) {
+      const metaString = this._buildMetaString(filename);
+      toWrite = CsvMetadataUtils.prependMetadataRowToCsv(finalCsv, metaString);
+    }
     this.ensureDir(path.dirname(outPath));
-    FileUtils.writeFile(outPath, finalCsv, 'utf8');
+    FileUtils.writeFile(outPath, toWrite, 'utf8');
     
     this.logger.info(chalk.green(`✅ 写出CSV (经过语义校验): ${outPath}`));
     this.logger.info(chalk.gray(`📋 校验报告: ${reportPath}`));
@@ -668,8 +685,16 @@ class FileProcessor {
       }, null, 2), 'utf8');
     }
 
+    const wantMeta = (this.currentRunContext && typeof this.currentRunContext.addMetadataRow === 'boolean')
+      ? this.currentRunContext.addMetadataRow
+      : (this.config?.output?.add_metadata_row ?? true);
+    let toWrite = finalCsv;
+    if (wantMeta) {
+      const metaString = this._buildMetaString(filename);
+      toWrite = CsvMetadataUtils.prependMetadataRowToCsv(finalCsv, metaString);
+    }
     this.ensureDir(path.dirname(outPath));
-    FileUtils.writeFile(outPath, finalCsv, 'utf8');
+    FileUtils.writeFile(outPath, toWrite, 'utf8');
     
     this.logger.info(chalk.green(`✅ 写出CSV (单样本): ${outPath}`));
     return { success: true, confidence: csvValidation.confidence };
@@ -688,8 +713,16 @@ class FileProcessor {
     const csvValidation = await this.csvValidator.validateAndFix(finalText, filename);
     const finalCsv = csvValidation.fixed;
 
+    const wantMeta = (this.currentRunContext && typeof this.currentRunContext.addMetadataRow === 'boolean')
+      ? this.currentRunContext.addMetadataRow
+      : (this.config?.output?.add_metadata_row ?? true);
+    let toWrite = finalCsv;
+    if (wantMeta) {
+      const metaString = this._buildMetaString(filename);
+      toWrite = CsvMetadataUtils.prependMetadataRowToCsv(finalCsv, metaString);
+    }
     this.ensureDir(path.dirname(outPath));
-    FileUtils.writeFile(outPath, finalCsv, 'utf8');
+    FileUtils.writeFile(outPath, toWrite, 'utf8');
     
     this.logger.info(chalk.green(`✅ 写出CSV (简单投票): ${outPath}`));
     return { success: true, confidence: 0.7 }; // 默认置信度
@@ -699,5 +732,24 @@ class FileProcessor {
 }
 
 module.exports = FileProcessor;
+
+// 私有方法定义（追加在类外原型上，避免改动过多结构）
+FileProcessor.prototype._buildMetaString = function(filename) {
+  try {
+    const ctx = this.currentRunContext || {};
+    const meta = {
+      run_id: ctx.runId,
+      mode: 'classic',
+      provider: ctx.modelSel?.provider,
+      model: ctx.modelSel?.model,
+      ts: ctx.timestamp,
+      src_name: filename,
+      reprocess: ctx.reprocess ? '1' : '0',
+    };
+    return CsvMetadataUtils.buildMetaString(meta, '[META]');
+  } catch (_) {
+    return CsvMetadataUtils.buildMetaString({ note: 'meta_build_failed' }, '[META]');
+  }
+};
 
 

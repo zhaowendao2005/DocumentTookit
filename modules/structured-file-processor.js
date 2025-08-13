@@ -9,6 +9,7 @@ const TokenCounter = require('../utils/token-counter');
 const JsonSchemaValidator = require('./json-schema-validator');
 const JsonUtils = require('../utils/json-utils');
 const { ErrorClassifier, ErrorReporter } = require('../utils/errors');
+const CsvMetadataUtils = require('../utils/csv-metadata');
 
 /**
  * 结构化文件处理器：LLM 输出 JSON(rows) → 本地校验/修复 → CSV → 进入现有校验/语义一致性
@@ -41,6 +42,15 @@ class StructuredFileProcessor {
     const tempRoot = this.config.directories.temp_dir || path.join(path.dirname(outputDir), 'temp');
     this._ensureDir(runOutputDir);
     this._ensureDir(tempRoot);
+
+    // 保存上下文（供元数据行使用）
+    this._currentRunContext = {
+      runId,
+      runOutputDir,
+      modelSel,
+      promptVersion: options.promptVersion,
+      timestamp: new Date().toISOString(),
+    };
 
     const inputs = Array.isArray(input) ? input : [input];
     const files = [];
@@ -93,7 +103,15 @@ class StructuredFileProcessor {
             this.logger.warn(chalk.yellow(`已硬停止，丢弃结果: ${rel}`));
             throw Object.assign(new Error('用户停止(硬)'), { code: 'USER_ABORT' });
           }
-          FileUtils.writeFile(outPath, finalCsv, 'utf8');
+          // 插入元数据行（可配置关闭）
+          const wantMeta = (typeof this.config?.output?.add_metadata_row === 'boolean') ? this.config.output.add_metadata_row : true;
+          let toWrite = finalCsv;
+          if (wantMeta) {
+            const metaString = this._buildMetaString(rel, repairAttemptsUsed, promptVersion);
+            const CsvMeta = require('../utils/csv-metadata');
+            toWrite = CsvMeta.prependMetadataRowToCsv(finalCsv, metaString);
+          }
+          FileUtils.writeFile(outPath, toWrite, 'utf8');
           this.logger.info(chalk.green(`✅ 写出CSV: ${outPath}`));
           record.succeeded = true;
           record.repairAttemptsUsed = repairAttemptsUsed;
@@ -331,5 +349,25 @@ class StructuredFileProcessor {
 }
 
 module.exports = StructuredFileProcessor;
+
+// 私有方法追加
+StructuredFileProcessor.prototype._buildMetaString = function(filename, repairAttemptsUsed, promptVersion) {
+  try {
+    const ctx = this._currentRunContext || {};
+    const meta = {
+      run_id: ctx.runId,
+      mode: 'structured',
+      provider: ctx.modelSel?.provider,
+      model: ctx.modelSel?.model,
+      ts: ctx.timestamp,
+      src_name: filename,
+      prompt_ver: promptVersion || ctx.promptVersion,
+      repair_used: repairAttemptsUsed,
+    };
+    return CsvMetadataUtils.buildMetaString(meta, '[META]');
+  } catch (_) {
+    return CsvMetadataUtils.buildMetaString({ note: 'meta_build_failed' }, '[META]');
+  }
+};
 
 

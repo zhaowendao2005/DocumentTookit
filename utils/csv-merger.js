@@ -3,6 +3,8 @@ const fs = require('fs');
 const chalk = require('chalk');
 const inquirer = require('inquirer');
 const FileUtils = require('./file-utils');
+const Papa = require('papaparse');
+const CsvMetadataUtils = require('./csv-metadata');
 
 /**
  * CSV合并工具
@@ -116,32 +118,30 @@ class CsvMerger {
     for (const csvFile of csvFiles) {
       try {
         const content = await FileUtils.readFile(csvFile);
-        const lines = content.split('\n').filter(line => line.trim());
-        
-        if (lines.length === 0) continue;
+        // 使用 Papa 解析，正确处理引号/逗号/换行
+        const parsed = Papa.parse(content, { header: false, skipEmptyLines: false, error: () => {} });
+        const rows = Array.isArray(parsed.data) ? parsed.data : [];
+        if (rows.length === 0) continue;
 
-        // 解析CSV行（简单处理，假设没有复杂的引号嵌套）
-        const parseCsvLine = (line) => {
-          return line.split(',').map(field => field.trim().replace(/^"|"$/g, ''));
-        };
+        // 若首行是元数据行，则跳过
+        let dataStart = 0;
+        if (CsvMetadataUtils.isMetadataRow(rows[0])) {
+          dataStart = 1;
+        }
 
-        // 第一行作为表头（如果还没有表头）
+        const currentHeader = rows[dataStart] || [];
         if (!headerRow) {
-          headerRow = parseCsvLine(lines[0]);
+          headerRow = currentHeader;
           allRows.push(headerRow);
         } else {
-          // 检查表头是否一致
-          const currentHeader = parseCsvLine(lines[0]);
           if (JSON.stringify(currentHeader) !== JSON.stringify(headerRow)) {
             this.logger.warn(`文件 ${path.basename(csvFile)} 的表头与第一个文件不一致，跳过表头行`);
           }
         }
 
-        // 添加数据行（跳过表头行）
-        for (let i = 1; i < lines.length; i++) {
-          const row = parseCsvLine(lines[i]);
-          if (row.length === headerRow.length && row.some(cell => cell.trim())) {
-            // 如果第一列是编号，重新编号；否则保持原样
+        for (let i = dataStart + 1; i < rows.length; i++) {
+          const row = Array.isArray(rows[i]) ? rows[i] : [rows[i]];
+          if (row.length === headerRow.length && row.some(cell => String(cell).trim())) {
             if (headerRow[0] === '编号' && row[0]) {
               row[0] = rowCounter.toString();
               rowCounter++;
@@ -159,13 +159,8 @@ class CsvMerger {
     // 写入合并后的CSV文件
     if (allRows.length > 1) { // 至少有表头+1行数据
       try {
-        const csvContent = allRows.map(row => 
-          row.map(field => `"${field.replace(/"/g, '""')}"`).join(',')
-        ).join('\n');
-
-        // 确保输出目录存在
+        const csvContent = Papa.unparse(allRows, { quotes: true, quoteChar: '"', escapeChar: '"' });
         this.ensureDir(path.dirname(outputPath));
-        
         await FileUtils.writeFile(outputPath, csvContent, 'utf8');
         this.logger.info(`合并完成: ${path.basename(outputPath)} (共 ${allRows.length - 1} 行数据)`);
         return true;
@@ -177,6 +172,84 @@ class CsvMerger {
       this.logger.warn('没有有效数据可合并');
       return false;
     }
+  }
+
+  /**
+   * 直接返回合并后的 rows（供后续写两个版本和 xlsx）
+   */
+  async mergeCsvFilesToRows(csvFiles) {
+    const allRows = [];
+    let headerRow = null;
+    let rowCounter = 1;
+    for (const csvFile of csvFiles) {
+      try {
+        const content = await FileUtils.readFile(csvFile);
+        const parsed = Papa.parse(content, { header: false, skipEmptyLines: false, error: () => {} });
+        const rows = Array.isArray(parsed.data) ? parsed.data : [];
+        if (rows.length === 0) continue;
+        let dataStart = 0;
+        if (CsvMetadataUtils.isMetadataRow(rows[0])) dataStart = 1;
+        const currentHeader = rows[dataStart] || [];
+        if (!headerRow) {
+          headerRow = currentHeader;
+          allRows.push(headerRow);
+        }
+        for (let i = dataStart + 1; i < rows.length; i++) {
+          const row = Array.isArray(rows[i]) ? rows[i] : [rows[i]];
+          if (row.length === headerRow.length && row.some(cell => String(cell).trim())) {
+            if (headerRow[0] === '编号' && row[0]) {
+              row[0] = rowCounter.toString();
+              rowCounter++;
+            }
+            allRows.push(row);
+          }
+        }
+      } catch (e) {
+        this.logger.error(`处理文件 ${path.basename(csvFile)} 失败: ${e.message}`);
+      }
+    }
+    return allRows;
+  }
+
+  /**
+   * 写出带合并级元数据行的 CSV
+   */
+  async writeMergedCsvWithMeta(rows, metaObj, outputPath, marker = '[META]') {
+    if (!Array.isArray(rows) || rows.length === 0) return false;
+    const metaString = CsvMetadataUtils.buildMetaString(metaObj, marker);
+    const withMeta = CsvMetadataUtils.prependMetadataRowToRows(rows, metaString);
+    const csv = Papa.unparse(withMeta, { quotes: true, quoteChar: '"', escapeChar: '"' });
+    this.ensureDir(path.dirname(outputPath));
+    await FileUtils.writeFile(outputPath, csv, 'utf8');
+    return true;
+  }
+
+  /**
+   * 写出不带元数据行的 CSV
+   */
+  async writeMergedCsv(rows, outputPath) {
+    if (!Array.isArray(rows) || rows.length === 0) return false;
+    const csv = Papa.unparse(rows, { quotes: true, quoteChar: '"', escapeChar: '"' });
+    this.ensureDir(path.dirname(outputPath));
+    await FileUtils.writeFile(outputPath, csv, 'utf8');
+    return true;
+  }
+
+  /**
+   * 导出为 XLSX：Sheet1=带元数据，Sheet2=无元数据
+   */
+  async exportXlsx({ withMetaRows, noMetaRows, xlsxPath, sheet1 = '带元数据', sheet2 = '无元数据' }) {
+    const ExcelJS = require('exceljs');
+    const wb = new ExcelJS.Workbook();
+    const addSheet = (name, rows) => {
+      const ws = wb.addWorksheet(name);
+      for (const r of rows) ws.addRow(r);
+    };
+    if (Array.isArray(withMetaRows) && withMetaRows.length) addSheet(sheet1, withMetaRows);
+    if (Array.isArray(noMetaRows) && noMetaRows.length) addSheet(sheet2, noMetaRows);
+    this.ensureDir(path.dirname(xlsxPath));
+    await wb.xlsx.writeFile(xlsxPath);
+    return true;
   }
 
   /**

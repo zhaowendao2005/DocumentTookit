@@ -331,6 +331,86 @@ class MainApplication {
             }
 
             this.ui.showSuccess(`处理完成：总数=${result.total} 成功=${result.succeeded} 失败=${result.failed}`);
+
+            // 收尾后处理：询问是否插入元数据行（已在写出阶段应用开关）、是否自动清洗合并、是否导出为XLSX
+            try {
+                const inquirer = require('inquirer');
+                const answers = await inquirer.prompt([
+                    {
+                        type: 'confirm',
+                        name: 'autoCleanMerge',
+                        message: chalk.cyan('是否对本次产物自动执行“清洗并合并”？'),
+                        default: this.config?.post_run?.auto_clean_merge === 'always'
+                    },
+                    {
+                        type: 'confirm',
+                        name: 'addMetadataRow',
+                        message: chalk.cyan('是否在单文件CSV与合并产物中启用“元数据行”？'),
+                        default: (typeof this.config?.output?.add_metadata_row === 'boolean') ? this.config.output.add_metadata_row : true
+                    },
+                    {
+                        type: 'confirm',
+                        name: 'exportXlsx',
+                        message: chalk.cyan('是否将合并结果导出为 Excel(xlsx)？'),
+                        default: false
+                    },
+                    {
+                        type: 'confirm',
+                        name: 'treatCommonNull',
+                        message: chalk.cyan('清洗时是否将 NULL/N-A/— 等也视为空？'),
+                        default: !!this.config?.post_run?.clean?.treat_common_null,
+                        when: (a) => a.autoCleanMerge
+                    }
+                ]);
+
+                if (answers.autoCleanMerge) {
+                    const cleanedDir = path.join(result.runOutputDir, this.config?.post_run?.clean?.output_subdir || 'cleaned');
+                    const { runOnce } = require('./tools/csv-cleaner');
+                    await runOnce({ target: result.runOutputDir, outputDir: cleanedDir, treatCommonNull: answers.treatCommonNull });
+
+                    const merger = new CsvMerger();
+                    const csvFiles = await merger.findCsvFiles(cleanedDir);
+                    const rows = await merger.mergeCsvFilesToRows(csvFiles);
+
+                    const nameNoMeta = this.config?.post_run?.merge?.output_name_csv_no_meta || 'merged_clean.csv';
+                    const nameWithMeta = this.config?.post_run?.merge?.output_name_csv_with_meta || 'merged_clean_with_meta.csv';
+                    const xlsxName = this.config?.post_run?.merge?.output_name_xlsx || 'merged_clean.xlsx';
+
+                    const outNoMeta = path.join(cleanedDir, nameNoMeta);
+                    const outWithMeta = path.join(cleanedDir, nameWithMeta);
+                    const outXlsx = path.join(cleanedDir, xlsxName);
+
+                    // 写无元数据版本
+                    await merger.writeMergedCsv(rows, outNoMeta);
+
+                    // 写带元数据版本（合并级元数据仅一行）
+                    if (answers.addMetadataRow) {
+                        const metaObj = {
+                            run_id: result.runId,
+                            mode: mode,
+                            files_count: csvFiles.length,
+                            ts: new Date().toISOString(),
+                            run_dir: result.runOutputDir
+                        };
+                        await merger.writeMergedCsvWithMeta(rows, metaObj, outWithMeta, (this.config?.output?.metadata_marker || '[META]'));
+                    }
+
+                    // 可选导出 XLSX（Sheet1=带元数据；Sheet2=无元数据）
+                    if (answers.exportXlsx) {
+                        const CsvMeta = require('./utils/csv-metadata');
+                        const marker = this.config?.output?.metadata_marker || '[META]';
+                        let withMetaRows = rows;
+                        if (answers.addMetadataRow) {
+                            const metaObj = { run_id: result.runId, mode: mode, files_count: csvFiles.length, ts: new Date().toISOString(), run_dir: result.runOutputDir };
+                            const metaString = CsvMeta.buildMetaString(metaObj, marker);
+                            withMetaRows = CsvMeta.prependMetadataRowToRows(rows, metaString);
+                        }
+                        await merger.exportXlsx({ withMetaRows, noMetaRows: rows, xlsxPath: outXlsx, sheet1: '带元数据', sheet2: '无元数据' });
+                    }
+                }
+            } catch (e) {
+                this.ui.showWarning('后处理失败：' + e.message);
+            }
             try {
                 if (process.stdin.isTTY) {
                     process.stdin.setRawMode(false);
