@@ -115,18 +115,16 @@ class FileSelector {
                 }
             }
 
-            // 处理导航操作
-            if (navigationActions.length > 0) {
-                const navAction = navigationActions[0]; // 只处理第一个导航操作
-                const handled = await this._handleNavigation(navAction);
-                if (!handled) {
-                    continue; // 导航后继续选择
-                }
-            }
-
-            // 如果有选择的文件，显示结果并确认
+            // 若已有有效选择，优先确认；忽略同时勾选的导航项
             if (selectedFiles.length > 0) {
                 return await this._confirmMultipleSelection(selectedFiles);
+            }
+
+            // 仅在没有任何选择时，才处理导航动作
+            if (navigationActions.length > 0) {
+                const navAction = navigationActions[0]; // 只处理第一个导航操作
+                await this._handleNavigation(navAction);
+                continue; // 导航后继续选择
             }
         }
     }
@@ -386,7 +384,7 @@ class FileSelector {
                         if (type === 'directory' || type === 'both') {
                             choices.push({
                                 name: `📁 ${item}`,
-                                value: `__DIR__${fullPath}`,
+                                value: fullPath,
                                 short: item
                             });
                         }
