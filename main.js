@@ -370,42 +370,26 @@ class MainApplication {
 
                     const merger = new CsvMerger();
                     const csvFiles = await merger.findCsvFiles(cleanedDir);
-                    const rows = await merger.mergeCsvFilesToRows(csvFiles);
 
-                    const nameNoMeta = this.config?.post_run?.merge?.output_name_csv_no_meta || 'merged_clean.csv';
-                    const nameWithMeta = this.config?.post_run?.merge?.output_name_csv_with_meta || 'merged_clean_with_meta.csv';
-                    const xlsxName = this.config?.post_run?.merge?.output_name_xlsx || 'merged_clean.xlsx';
+                    const nameVerbatim = this.config?.post_run?.merge?.output_name_csv_verbatim || 'merged_verbatim.csv';
+                    const nameNoMeta = this.config?.post_run?.merge?.output_name_csv_no_meta || 'merged_no_meta.csv';
+                    const xlsxName = this.config?.post_run?.merge?.output_name_xlsx || 'merged.xlsx';
 
+                    const outVerbatim = path.join(cleanedDir, nameVerbatim);
                     const outNoMeta = path.join(cleanedDir, nameNoMeta);
-                    const outWithMeta = path.join(cleanedDir, nameWithMeta);
                     const outXlsx = path.join(cleanedDir, xlsxName);
 
-                    // 写无元数据版本
-                    await merger.writeMergedCsv(rows, outNoMeta);
+                    const insertBlank = this.config?.post_run?.merge?.insert_blank_line_between_blocks !== false;
+                    const marker = this.config?.output?.metadata_marker || '[META]';
 
-                    // 写带元数据版本（合并级元数据仅一行）
-                    if (answers.addMetadataRow) {
-                        const metaObj = {
-                            run_id: result.runId,
-                            mode: mode,
-                            files_count: csvFiles.length,
-                            ts: new Date().toISOString(),
-                            run_dir: result.runOutputDir
-                        };
-                        await merger.writeMergedCsvWithMeta(rows, metaObj, outWithMeta, (this.config?.output?.metadata_marker || '[META]'));
-                    }
+                    const rowsVerbatim = await merger.concatCsvFilesVerbatim(csvFiles, { insertBlankLineBetweenBlocks: insertBlank });
+                    const rowsNoMeta = await merger.concatCsvFilesNoMeta(csvFiles, { insertBlankLineBetweenBlocks: insertBlank, marker });
 
-                    // 可选导出 XLSX（Sheet1=带元数据；Sheet2=无元数据）
+                    await merger.writeMergedCsv(rowsVerbatim, outVerbatim);
+                    await merger.writeMergedCsv(rowsNoMeta, outNoMeta);
+
                     if (answers.exportXlsx) {
-                        const CsvMeta = require('./utils/csv-metadata');
-                        const marker = this.config?.output?.metadata_marker || '[META]';
-                        let withMetaRows = rows;
-                        if (answers.addMetadataRow) {
-                            const metaObj = { run_id: result.runId, mode: mode, files_count: csvFiles.length, ts: new Date().toISOString(), run_dir: result.runOutputDir };
-                            const metaString = CsvMeta.buildMetaString(metaObj, marker);
-                            withMetaRows = CsvMeta.prependMetadataRowToRows(rows, metaString);
-                        }
-                        await merger.exportXlsx({ withMetaRows, noMetaRows: rows, xlsxPath: outXlsx, sheet1: '带元数据', sheet2: '无元数据' });
+                        await merger.exportXlsx({ withMetaRows: rowsVerbatim, noMetaRows: rowsNoMeta, xlsxPath: outXlsx, sheet1: '含元数据', sheet2: '无元数据' });
                     }
                 }
             } catch (e) {

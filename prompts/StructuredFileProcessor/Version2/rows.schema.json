@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["rows"],
+  "properties": {
+    "rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["编号", "问题", "答案", "答题人", "专业"],
+        "properties": {
+          "编号": { "type": "integer", "minimum": 1, "description": "正整数" },
+          "问题": { "type": "string", "minLength": 0, "maxLength": 500, "description": "UTF-8 纯文本；禁止 LaTeX 控制序列（如 $, \\mathsf, \\frac 等）" },
+          "答案": { "type": "string", "minLength": 0, "description": "UTF-8 纯文本；禁止 LaTeX 控制序列" },
+          "答题人": { "type": "string", "minLength": 0, "maxLength": 100, "description": "UTF-8 纯文本；禁止 LaTeX 控制序列" },
+          "专业": { "type": "string", "minLength": 0, "maxLength": 100, "description": "UTF-8 纯文本；禁止 LaTeX 控制序列" }
+        }
+      }
+    }
+  }
+}
+
+

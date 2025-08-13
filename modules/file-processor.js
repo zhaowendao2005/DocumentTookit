@@ -472,7 +472,7 @@ class FileProcessor {
 
     // 1. 如果是单样本，直接处理
     if (!enableMulti || results.length <= 1) {
-      return await this.processSingleSample(rel, results[0] || '', outPath, tempFilePath);
+      return await this.processSingleSample(rel, results[0] || '', outPath, tempFilePath, meta.file?.path);
     }
 
     // 2. 先对每个样本进行CSV格式修复 (修复工作流顺序)
@@ -531,15 +531,15 @@ class FileProcessor {
     // 5. 根据用户决策处理
     switch (userDecision.action) {
       case 'accept_auto':
-        return await this.processValidatedResult(validationResult, outPath, tempFilePath, rel);
+        return await this.processValidatedResult(validationResult, outPath, tempFilePath, rel, meta.file?.path);
       
       case 'manual_select':
         const selectedSample = results[userDecision.selectedIndex];
-        return await this.processSingleSample(rel, selectedSample, outPath, tempFilePath);
+        return await this.processSingleSample(rel, selectedSample, outPath, tempFilePath, meta.file?.path);
       
       case 'skip_validation':
         // 使用原始的简单投票逻辑
-        return await this.processWithSimpleVoting(results, outPath, tempFilePath, rel);
+        return await this.processWithSimpleVoting(results, outPath, tempFilePath, rel, meta.file?.path);
       
       default:
         throw new Error(`未知的用户决策: ${userDecision.action}`);
@@ -633,7 +633,7 @@ class FileProcessor {
   /**
    * 处理校验后的结果
    */
-  async processValidatedResult(validationResult, outPath, tempFilePath, filename) {
+  async processValidatedResult(validationResult, outPath, tempFilePath, filename, absInputPath) {
     if (!validationResult.selectedSample) {
       throw new Error('没有可用的校验结果');
     }
@@ -655,7 +655,7 @@ class FileProcessor {
       : (this.config?.output?.add_metadata_row ?? true);
     let toWrite = finalCsv;
     if (wantMeta) {
-      const metaString = this._buildMetaString(filename);
+      const metaString = this._buildMetaString(filename, absInputPath);
       toWrite = CsvMetadataUtils.prependMetadataRowToCsv(finalCsv, metaString);
     }
     this.ensureDir(path.dirname(outPath));
@@ -670,7 +670,7 @@ class FileProcessor {
   /**
    * 处理单样本
    */
-  async processSingleSample(filename, content, outPath, tempFilePath) {
+  async processSingleSample(filename, content, outPath, tempFilePath, absInputPath) {
     const csvValidation = await this.csvValidator.validateAndFix(content, filename);
     const finalCsv = csvValidation.fixed;
 
@@ -690,7 +690,7 @@ class FileProcessor {
       : (this.config?.output?.add_metadata_row ?? true);
     let toWrite = finalCsv;
     if (wantMeta) {
-      const metaString = this._buildMetaString(filename);
+      const metaString = this._buildMetaString(filename, absInputPath);
       toWrite = CsvMetadataUtils.prependMetadataRowToCsv(finalCsv, metaString);
     }
     this.ensureDir(path.dirname(outPath));
@@ -703,7 +703,7 @@ class FileProcessor {
   /**
    * 使用简单投票处理（兼容原逻辑）
    */
-  async processWithSimpleVoting(results, outPath, tempFilePath, filename) {
+  async processWithSimpleVoting(results, outPath, tempFilePath, filename, absInputPath) {
     // 使用原始的多数投票逻辑
     const counter = new Map();
     for (const r of results) counter.set(r, (counter.get(r) || 0) + 1);
@@ -718,7 +718,7 @@ class FileProcessor {
       : (this.config?.output?.add_metadata_row ?? true);
     let toWrite = finalCsv;
     if (wantMeta) {
-      const metaString = this._buildMetaString(filename);
+      const metaString = this._buildMetaString(filename, absInputPath);
       toWrite = CsvMetadataUtils.prependMetadataRowToCsv(finalCsv, metaString);
     }
     this.ensureDir(path.dirname(outPath));
@@ -734,7 +734,7 @@ class FileProcessor {
 module.exports = FileProcessor;
 
 // 私有方法定义（追加在类外原型上，避免改动过多结构）
-FileProcessor.prototype._buildMetaString = function(filename) {
+FileProcessor.prototype._buildMetaString = function(filename, absInputPath) {
   try {
     const ctx = this.currentRunContext || {};
     const meta = {
@@ -744,6 +744,7 @@ FileProcessor.prototype._buildMetaString = function(filename) {
       model: ctx.modelSel?.model,
       ts: ctx.timestamp,
       src_name: filename,
+      src_path: absInputPath || '',
       reprocess: ctx.reprocess ? '1' : '0',
     };
     return CsvMetadataUtils.buildMetaString(meta, '[META]');

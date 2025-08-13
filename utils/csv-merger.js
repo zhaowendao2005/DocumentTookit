@@ -175,6 +175,57 @@ class CsvMerger {
   }
 
   /**
+   * 逐文件原样拼接（verbatim）：保留各文件的元数据行与表头，不统一表头、不重编号。
+   * 返回 rows（二维数组）。
+   */
+  async concatCsvFilesVerbatim(csvFiles, { insertBlankLineBetweenBlocks = true } = {}) {
+    const allRows = [];
+    let first = true;
+    for (const csvFile of csvFiles) {
+      try {
+        const content = await FileUtils.readFile(csvFile);
+        const parsed = Papa.parse(content, { header: false, skipEmptyLines: false, error: () => {} });
+        const rows = Array.isArray(parsed.data) ? parsed.data : [];
+        if (rows.length === 0) continue;
+        if (!first && insertBlankLineBetweenBlocks) {
+          allRows.push([]); // 空行分隔
+        }
+        for (const r of rows) allRows.push(Array.isArray(r) ? r : [r]);
+        first = false;
+      } catch (e) {
+        this.logger.error(`读取文件失败: ${path.basename(csvFile)} - ${e.message}`);
+      }
+    }
+    return allRows;
+  }
+
+  /**
+   * 去除各文件元数据行但保留表头与数据，逐文件拼接
+   */
+  async concatCsvFilesNoMeta(csvFiles, { insertBlankLineBetweenBlocks = true, marker = '[META]' } = {}) {
+    const allRows = [];
+    let first = true;
+    for (const csvFile of csvFiles) {
+      try {
+        const content = await FileUtils.readFile(csvFile);
+        const parsed = Papa.parse(content, { header: false, skipEmptyLines: false, error: () => {} });
+        const rows = Array.isArray(parsed.data) ? parsed.data : [];
+        if (rows.length === 0) continue;
+        let start = 0;
+        if (CsvMetadataUtils.isMetadataRow(rows[0], marker)) start = 1;
+        if (!first && insertBlankLineBetweenBlocks) allRows.push([]);
+        for (let i = start; i < rows.length; i++) {
+          const r = Array.isArray(rows[i]) ? rows[i] : [rows[i]];
+          allRows.push(r);
+        }
+        first = false;
+      } catch (e) {
+        this.logger.error(`读取文件失败: ${path.basename(csvFile)} - ${e.message}`);
+      }
+    }
+    return allRows;
+  }
+  /**
    * 直接返回合并后的 rows（供后续写两个版本和 xlsx）
    */
   async mergeCsvFilesToRows(csvFiles) {

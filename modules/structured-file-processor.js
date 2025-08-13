@@ -107,7 +107,7 @@ class StructuredFileProcessor {
           const wantMeta = (typeof this.config?.output?.add_metadata_row === 'boolean') ? this.config.output.add_metadata_row : true;
           let toWrite = finalCsv;
           if (wantMeta) {
-            const metaString = this._buildMetaString(rel, repairAttemptsUsed, promptVersion);
+            const metaString = this._buildMetaString(file.path || '', repairAttemptsUsed, promptVersion);
             const CsvMeta = require('../utils/csv-metadata');
             toWrite = CsvMeta.prependMetadataRowToCsv(finalCsv, metaString);
           }
@@ -351,7 +351,7 @@ class StructuredFileProcessor {
 module.exports = StructuredFileProcessor;
 
 // 私有方法追加
-StructuredFileProcessor.prototype._buildMetaString = function(filename, repairAttemptsUsed, promptVersion) {
+StructuredFileProcessor.prototype._buildMetaString = function(absInputPathOrName, repairAttemptsUsed, promptVersion) {
   try {
     const ctx = this._currentRunContext || {};
     const meta = {
@@ -360,7 +360,8 @@ StructuredFileProcessor.prototype._buildMetaString = function(filename, repairAt
       provider: ctx.modelSel?.provider,
       model: ctx.modelSel?.model,
       ts: ctx.timestamp,
-      src_name: filename,
+      src_name: require('path').basename(absInputPathOrName || ''),
+      src_path: absInputPathOrName || '',
       prompt_ver: promptVersion || ctx.promptVersion,
       repair_used: repairAttemptsUsed,
     };
