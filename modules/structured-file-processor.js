@@ -70,6 +70,16 @@ class StructuredFileProcessor {
     }
     if (files.length === 0) return { total: 0, succeeded: 0, failed: 0 };
 
+    // 写入本次运行的输入顺序清单（用于合并时保持顺序）
+    try {
+      const manifestPath = path.join(runOutputDir, 'inputs_order.json');
+      const orderList = files.map((f) => f.relativePath || path.basename(f.path));
+      fs.writeFileSync(manifestPath, JSON.stringify(orderList, null, 2), 'utf8');
+      this.logger.info(`已写入顺序清单: ${manifestPath}`);
+    } catch (e) {
+      this.logger.warn(`写入顺序清单失败: ${e.message}`);
+    }
+
     const promptVersion = options.promptVersion || this.config.structured?.default_prompt_version || 'v1.0';
     const maxRepairAttempts = Math.max(0, Math.min(3, Number(options.repairAttempts ?? this.config.structured?.max_repair_attempts ?? 2)));
 

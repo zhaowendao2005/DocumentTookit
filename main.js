@@ -369,7 +369,36 @@ class MainApplication {
                     await runOnce({ target: result.runOutputDir, outputDir: cleanedDir, treatCommonNull: answers.treatCommonNull });
 
                     const merger = new CsvMerger();
-                    const csvFiles = await merger.findCsvFiles(cleanedDir);
+                    let csvFiles = await merger.findCsvFiles(cleanedDir);
+
+                    // 基于顺序清单进行排序与缺失容忍
+                    try {
+                        const manifestPath = path.join(result.runOutputDir, 'inputs_order.json');
+                        if (fs.existsSync(manifestPath)) {
+                            const orderList = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                            const toCleanedPath = (rel) => {
+                                const relDir = path.dirname(rel);
+                                const base = path.basename(rel, path.extname(rel));
+                                return path.join(cleanedDir, relDir, `${base}.cleaned.csv`);
+                            };
+                            const ordered = [];
+                            const missing = [];
+                            for (const rel of orderList) {
+                                const p = toCleanedPath(rel);
+                                if (fs.existsSync(p)) ordered.push(p); else missing.push(rel);
+                            }
+                            if (ordered.length > 0) {
+                                csvFiles = ordered;
+                            }
+                            if (missing.length > 0) {
+                                this.ui.showWarning(`顺序清单中有 ${missing.length} 个文件在清洗产物中缺失，已跳过`);
+                            }
+                        } else {
+                            this.ui.showWarning('未发现 inputs_order.json，合并顺序按文件系统遍历，可能与输入顺序不一致');
+                        }
+                    } catch (e) {
+                        this.ui.showWarning(`应用顺序清单失败：${e.message}`);
+                    }
 
                     const nameVerbatim = this.config?.post_run?.merge?.output_name_csv_verbatim || 'merged_verbatim.csv';
                     const nameNoMeta = this.config?.post_run?.merge?.output_name_csv_no_meta || 'merged_no_meta.csv';

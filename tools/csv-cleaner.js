@@ -98,8 +98,13 @@ async function runOnce({ target, outputDir, treatCommonNull }) {
     for (const file of files) {
         try {
             const res = CsvCleanerCore.processFile(file, { treatCommonNull });
+            // 保留目录结构，避免同名冲突，并便于顺序映射
+            const rel = path.relative(target, file);
+            const relDir = path.dirname(rel);
             const base = path.basename(file, path.extname(file));
-            const outFile = path.join(outputDir, `${base}.cleaned.csv`);
+            const outDir = path.join(outputDir, relDir);
+            ensureDir(outDir);
+            const outFile = path.join(outDir, `${base}.cleaned.csv`);
             fs.writeFileSync(outFile, res.outputCsv, 'utf8');
 
             console.log(chalk.green(`✔ ${path.basename(file)} -> ${path.basename(outFile)}  删除 ${res.removed.length}`));

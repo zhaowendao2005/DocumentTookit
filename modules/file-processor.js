@@ -104,6 +104,16 @@ class FileProcessor {
     this.logger.info(`共发现可处理文件: ${files.length}`);
     if (files.length === 0) return { total: 0, succeeded: 0, failed: 0 };
 
+    // 写入本次运行的输入顺序清单（用于合并时保持顺序）
+    try {
+      const manifestPath = path.join(runOutputDir, 'inputs_order.json');
+      const orderList = files.map((f) => f.relativePath || path.basename(f.path));
+      fs.writeFileSync(manifestPath, JSON.stringify(orderList, null, 2), 'utf8');
+      this.logger.info(`已写入顺序清单: ${manifestPath}`);
+    } catch (e) {
+      this.logger.warn(`写入顺序清单失败: ${e.message}`);
+    }
+
     // 构建所有请求任务（扁平化）：文件数 × request_count
     const enableMulti = !!(this.lastValidation?.enableMultiple);
     const uiRequestCount = this.lastValidation?.requestCount;
