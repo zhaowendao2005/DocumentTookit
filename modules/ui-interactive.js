@@ -62,9 +62,9 @@ class InteractiveUI {
                 description: '使用LLM批量处理文件，支持错配检测'
             },
             {
-                name: '📄 Docx转Markdown',
+                name: '📄 Word转Markdown',
                 value: 'docx_to_md',
-                description: '批量转换Word文档为Markdown格式'
+                description: '批量将Word文档(doc/docx)转换为markdown文件'
             },
             {
                 name: '🧪 模型测试',
@@ -647,14 +647,14 @@ class InteractiveUI {
     }
 
     /**
-     * 配置Docx转Md转换
+     * 配置Word转Md转换
      */
     async configureDocxToMd() {
-        console.log(chalk.cyan('\n📄 配置Docx转Markdown转换...\n'));
+        console.log(chalk.cyan('\n📄 配置Word文档转Markdown转换...\n'));
 
         // 选择输入目录
         const inputDir = await this.selectPath(
-            '包含docx文件的输入目录', 
+            '包含Word文档(doc/docx)的输入目录', 
             this.config.docx_converter?.default_input_dir || './data/input'
         );
         

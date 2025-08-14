@@ -60,7 +60,7 @@ class FileProcessor {
     // 为本次运行创建时间戳输出子目录（东八区本地时间）
     const runId = options.reuseRunOutputDir && options.fixedRunId
       ? options.fixedRunId
-      : this.formatLocalTimestamp('Asia/Shanghai');
+      : (options.customRunName || this.formatLocalTimestamp('Asia/Shanghai'));
     const runOutputDir = options.reuseRunOutputDir && options.fixedRunOutputDir
       ? options.fixedRunOutputDir
       : path.join(outputDir, runId);

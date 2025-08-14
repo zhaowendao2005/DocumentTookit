@@ -35,7 +35,7 @@ class StructuredFileProcessor {
   async runBatch(modelSel, input, outputDir, options = {}) {
     const runId = options.reuseRunOutputDir && options.fixedRunId
       ? options.fixedRunId
-      : this._formatLocalTimestamp('Asia/Shanghai');
+      : (options.customRunName || this._formatLocalTimestamp('Asia/Shanghai'));
     const runOutputDir = options.reuseRunOutputDir && options.fixedRunOutputDir
       ? options.fixedRunOutputDir
       : path.join(outputDir, runId);

@@ -229,6 +229,42 @@ class MainApplication {
                 setup.outputDir = path.dirname(runOutputDir); // 传入父 output，以便处理器内部拼回 fixedRunOutputDir
                 this.ui.showInfo(`错误重处理：从 ${errorDir} 收集 ${reInputs.length} 个文件，结果将回写 ${runOutputDir}`);
             }
+            // 计算 baseName 并生成自定义运行名（目录名）
+            let customRunName;
+            try {
+                const inputsArr = Array.isArray(setup.inputs) ? setup.inputs : [setup.inputs].filter(Boolean);
+                const dirs = [];
+                for (const p of inputsArr) {
+                    try {
+                        const st = fs.statSync(p);
+                        dirs.push(st.isDirectory() ? p : path.dirname(p));
+                    } catch {}
+                }
+                const split = (p) => p.replace(/\\/g, '/').split('/').filter(Boolean);
+                let baseName = null;
+                if (dirs.length > 0) {
+                    const partsArr = dirs.map(split);
+                    const minLen = Math.min(...partsArr.map(a => a.length));
+                    const common = [];
+                    for (let i = 0; i < minLen; i++) {
+                        const seg = partsArr[0][i];
+                        if (partsArr.every(a => a[i] === seg)) common.push(seg); else break;
+                    }
+                    if (common.length > 0) {
+                        baseName = common[common.length - 1];
+                    } else {
+                        const counter = new Map();
+                        for (const d of dirs) counter.set(d, (counter.get(d) || 0) + 1);
+                        const pick = [...counter.entries()].sort((a,b)=> b[1]-a[1] || String(a[0]).localeCompare(String(b[0])))[0][0];
+                        baseName = path.basename(pick);
+                    }
+                }
+                if (baseName) {
+                    baseName = baseName.replace(/[<>:"/\\|?*]+/g, '').trim();
+                    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    customRunName = `${baseName}_${ts}`;
+                }
+            } catch (_) {}
             if (mode === 'structured') {
                 const StructuredFileProcessor = require('./modules/structured-file-processor');
                 const sproc = new StructuredFileProcessor({ config: this.config, logger: console });
@@ -237,7 +273,7 @@ class MainApplication {
                     { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
                     setup.inputs,
                     setup.outputDir,
-                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts, controller, ...extraOptions }
+                    { promptVersion: setup?.structured?.promptVersion, repairAttempts: setup?.structured?.repairAttempts, controller, ...extraOptions, customRunName }
                 );
 
                 // 生成运行总结报告（md + json）
@@ -294,7 +330,7 @@ class MainApplication {
                     { ...setup.model, timeouts: setup.timeouts, validation: setup.validation },
                     setup.inputs,
                     setup.outputDir,
-                    { controller, ...extraOptions }
+                    { controller, ...extraOptions, customRunName }
                 );
                 // 经典模式同样生成运行总结
                 try {
@@ -402,7 +438,27 @@ class MainApplication {
 
                     const nameVerbatim = this.config?.post_run?.merge?.output_name_csv_verbatim || 'merged_verbatim.csv';
                     const nameNoMeta = this.config?.post_run?.merge?.output_name_csv_no_meta || 'merged_no_meta.csv';
-                    const xlsxName = this.config?.post_run?.merge?.output_name_xlsx || 'merged.xlsx';
+                    // 若未显式配置xlsx名，默认用输入baseName作为文件名
+                    let xlsxName = this.config?.post_run?.merge?.output_name_xlsx;
+                    if (!xlsxName) {
+                        try {
+                            const manifestPath = path.join(result.runOutputDir, 'inputs_order.json');
+                            let baseName = null;
+                            // 尝试从运行目录名直接取 baseName
+                            baseName = path.basename(result.runOutputDir).replace(/_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/,'');
+                            baseName = baseName && baseName.trim() ? baseName : null;
+                            if (!baseName && fs.existsSync(manifestPath)) {
+                                const orderList = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+                                if (Array.isArray(orderList) && orderList.length) {
+                                    const first = orderList[0];
+                                    baseName = path.basename(path.dirname(first));
+                                }
+                            }
+                            xlsxName = (baseName && baseName.replace(/[<>:"/\\|?*]+/g, '').trim()) ? `${baseName}.xlsx` : 'merged.xlsx';
+                        } catch {
+                            xlsxName = 'merged.xlsx';
+                        }
+                    }
 
                     const outVerbatim = path.join(cleanedDir, nameVerbatim);
                     const outNoMeta = path.join(cleanedDir, nameNoMeta);
@@ -529,7 +585,7 @@ class MainApplication {
             
             // 使用现有的转换器
             const converter = new DocxToMdConverter();
-            const success = converter.convert(config.inputDir, config.outputDir);
+            const success = await converter.convert(config.inputDir, config.outputDir);
             
             if (success) {
                 this.ui.showSuccess('转换完成！');
